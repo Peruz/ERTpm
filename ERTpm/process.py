@@ -71,7 +71,7 @@ def check_args(args):
     return(args)
 
 def output_file(old_fname, new_ext='.dat', directory='.'):
-    """ return name for the output file and clean them if already exist"""
+    """ return name for the output file and clean them if already exist """
     f, old_ext = os.path.splitext(old_fname)
     new_fname = f + new_ext
     new_dfname = os.path.join(directory, new_fname)
@@ -81,7 +81,7 @@ def output_file(old_fname, new_ext='.dat', directory='.'):
 
 
 def read_labrecque(f=None):
-    """ read a labrecque data file an return data and electrode dataframes"""
+    """ read a labrecque data file an return data and electrode dataframes """
     AppRes = False
     FreDom = False
     with open(f) as fid:
@@ -145,10 +145,10 @@ def read_bert(k_file=None):
 
 def fun_rec(a: np.ndarray, b: np.ndarray, m: np.ndarray, n: np.ndarray, x: np.ndarray):
     l = int(len(x))
-    rec_num = np.zeros_like(x)
-    rec_avg = np.zeros_like(x)
-    rec_err = np.zeros_like(x)
-    rec_fnd = np.zeros_like(x)
+    rec_num = np.zeros_like(x, dtype=np.int64)
+    rec_avg = np.zeros_like(x, dtype=np.float64)
+    rec_err = np.zeros_like(x, dtype=np.float64)
+    rec_fnd = np.zeros_like(x, dtype=np.int64)
     for i in range(l):
         if rec_num[i] != 0:
             continue
@@ -162,14 +162,14 @@ def fun_rec(a: np.ndarray, b: np.ndarray, m: np.ndarray, n: np.ndarray, x: np.nd
                 rec_avg[j] = avg
                 rec_err[i] = err
                 rec_err[j] = err
-                rec_fnd[i] = 1  # mark the meas with reciprocals, else leave 0
-                rec_fnd[j] = 2  # distinguish between directs and reciprocals
+                rec_fnd[i] = 1  # mark meas as direct
+                rec_fnd[j] = 2  # mark meas as reciprocal (keep 0 for unpaired)
                 break
     return(rec_num, rec_avg, rec_err, rec_fnd)
 
 if numba_opt:
-    signature = 'UniTuple(float64[:],4)(int64[:],int64[:],int64[:],int64[:],float64[:])'
-    fun_rec = jit(signature_or_function=signature, nopython=True,
+    s = 'Tuple((int64[:],float64[:],float64[:],int64[:]))(int64[:],int64[:],int64[:],int64[:],float64[:])'
+    fun_rec = jit(signature_or_function=s, nopython=True,
                   parallel=False, cache=True, fastmath=True, nogil=True)(fun_rec)
 
 
@@ -185,8 +185,7 @@ class ERTdataset():
     data_dtypes={'meas': 'Int16', 'a': 'Int16', 'b': 'Int16', 'm': 'Int16', 'n': 'Int16',
               'r': float, 'k': float, 'rhoa': float, 'ip': float,
               'v': float, 'ctc': float, 'stk': float, 'datetime': 'datetime64[ns]',
-              'rec_num': 'Int16', 'rec_fnd': bool,
-              'rec_avg': float, 'rec_err': float,
+              'rec_num': 'Int16', 'rec_fnd': 'Int16', 'rec_avg': float, 'rec_err': float,
               'rec_ip_avg': float, 'rec_ip_err': float,
               'rec_valid': bool, 'k_valid': bool, 'rhoa_valid': bool, 'v_valid': bool,
               'ctc_valid': bool, 'stk_valid': bool, 'valid': bool}
@@ -221,11 +220,11 @@ class ERTdataset():
         self.data = self.data.astype(self.data_dtypes)
 
     def process_rec(self, fun_rec=fun_rec, x='r', x_avg='rec_avg', x_err='rec_err'):
-        a = self.data['a'].to_numpy(dtype=int)
-        b = self.data['b'].to_numpy(dtype=int)
-        m = self.data['m'].to_numpy(dtype=int)
-        n = self.data['n'].to_numpy(dtype=int)
-        x = self.data['r'].to_numpy(dtype=float)
+        a = self.data['a'].to_numpy(dtype=np.int64)
+        b = self.data['b'].to_numpy(dtype=np.int64)
+        m = self.data['m'].to_numpy(dtype=np.int64)
+        n = self.data['n'].to_numpy(dtype=np.int64)
+        x = self.data['r'].to_numpy(dtype=np.float64)
         rec_num, rec_avg, rec_err, rec_fnd = fun_rec(a, b, m, n, x)
         self.data['rec_num'] = rec_num
         self.data['rec_fnd'] = rec_fnd
@@ -245,15 +244,16 @@ class ERTdataset():
             self.data['k'] = self.data['k_']
             self.data.drop(columns='k_', inplace=True)
 
-    def couple_rec(self, couple=False, unpaired=False, dir_mark=1, rec_mark=2, unpaired_mark=0):
-        if (couple and unpaired):
+    def couple_rec(self, rec_couple=False, rec_unpaired=False,
+                   dir_mark=1, rec_mark=2, unpaired_mark=0):
+        if (rec_couple and rec_unpaired):
             direct = self.data.loc[self.data['rec_fnd'] == dir_mark]
             unpaired = self.data.loc[self.data['rec_fnd'] == unpaired_mark]
             self.data = pd.concat([direct, unpaired])
-        elif (couple and not unpaired):
+        elif (rec_couple and not rec_unpaired):
             direct = self.data.loc[self.data['rec_fnd'] == dir_mark]
             self.data = direct
-        elif (not couple and unpaired):
+        elif (not rec_couple and rec_unpaired):
             self.data = self.data
 
     def to_bert(self, fname, w_rhoa, w_ip, w_err, data_cols, elec_cols):
@@ -326,7 +326,8 @@ def __process__(f, args):
     ds.default_types()
     fcsv = output_file(f, new_ext='.csv', directory=args.dir_proc)
     ds.data.to_csv(fcsv, float_format='%#8g', index=False)
-    ds.couple_rec(couple=args.rec_couple, unpaired=args.rec_unpaired)
+    print(args.rec_couple)
+    ds.couple_rec(rec_couple=args.rec_couple, rec_unpaired=args.rec_unpaired)
     # output dat
     fdat = output_file(f, new_ext='.dat', directory='.')
     data_cols = ['a', 'b', 'm', 'n', 'r']
@@ -347,7 +348,6 @@ def process(**kargs):
     cmd_args = get_cmd()
     args = update_args(cmd_args, dict_args=kargs)
     args = check_args(args)
-
     for f in args.fName:
         print('\n', '-'*80, '\n', f)
         print(f)

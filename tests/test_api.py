@@ -1,6 +1,3 @@
-print(__name__)
-print(__package__)
-print(__file__)
 from ERTpm.manager import *
 from ERTpm.process import process
 from ERTpm.invert import invert
@@ -17,7 +14,7 @@ print(table)
 
 if do_process:
     print('\nPROCESSING')
-    table_to_process = select_table(table, which='new', col_check='process', col_needed='file')
+    table_to_process = select_table(table, which='all', col_check='process', col_needed='file')
     if table_to_process.empty:
         print('no new files')
     else:
@@ -33,7 +30,7 @@ if do_process:
             table.loc[table['file'] == f, process_columns] = process_values
         table = update_table(table, table_name, data_ext)
         table.sort_values(by='datetime', inplace=True)  # based on updated datetime column
-
+raise SystemExit
 if do_invert:
     print('\nINVERSION')
     table_to_invert = select_table(table, which='new', col_check='invert', col_needed='finv')

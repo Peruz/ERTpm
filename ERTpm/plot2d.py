@@ -16,8 +16,8 @@ def get_cmd():
     main.add_argument('-cov', type=str, default='cov', help='coverage vtk name')
     # OPTIONS
     option.add_argument('-dHow', type=str, help='how to perform difference', default='pct')
-    option.add_argument('-Cmin', type=float, help='min colorbar', default=None)
-    option.add_argument('-Cmax', type=float, help='max colorbar', default=None)
+    option.add_argument('-Cmin', type=float, help='min colorbar', default=1)
+    option.add_argument('-Cmax', type=float, help='max colorbar', default=100)
     option.add_argument('-Cgrid', type=str, help='grid color', default=None)
     option.add_argument('-Cedge', type=str, help='edge color', default='darkgrey')
     option.add_argument('-Cmap', type=str, help='colormap name', default='jet')
@@ -79,7 +79,7 @@ def _plot_(f, args):
     act_mesh = plotter.add_mesh(mesh, scalars=args.rho, opacity=args.cov,
                      show_edges=False, edge_color='k',
                      show_scalar_bar=True, scalar_bar_args=sba, stitle='resistivity ohm m\n',
-                     cmap=args.Cmap)
+                     cmap=args.Cmap, clim=(args.Cmin, args.Cmax))
     act_bounds = plotter.show_bounds(mesh=mesh, grid=args.Cgrid,
                         location='outer', ticks=args.ticks, font_size=args.Fsize,
                         font_family='times', use_2d=True, padding=0,
