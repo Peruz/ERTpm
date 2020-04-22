@@ -30,7 +30,6 @@ if do_process:
             table.loc[table['file'] == f, process_columns] = process_values
         table = update_table(table, table_name, data_ext)
         table.sort_values(by='datetime', inplace=True)  # based on updated datetime column
-raise SystemExit
 if do_invert:
     print('\nINVERSION')
     table_to_invert = select_table(table, which='new', col_check='invert', col_needed='finv')
@@ -57,7 +56,7 @@ if do_plot2d:
             f = r['file']
             fvtk = r['fvtk']
             dName = None
-            gen_fpng = plot2d(fName=fvtk, dName=dName)
+            gen_fpng = plot2d(fName=fvtk, dName=dName, Cmin=2, Cmax=12)
             fpng = next(gen_fpng)
             table.loc[table['file'] == f, ['plot', 'fpng']] = True, fpng
         table = update_table(table, table_name, data_ext)

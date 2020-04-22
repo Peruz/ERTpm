@@ -22,6 +22,9 @@ import os
 import re
 import pandas as pd
 import numpy as np
+from ERTpm.invert import invert
+from ERTpm.process import process
+from ERTpm.plot2d import plot2d
 
 def init_table(table_name, table_headers, table_dtypes):
     """ init table, read existing or create one and save it """
@@ -81,7 +84,6 @@ if __name__ == '__main__':
 
     if do_process:
         print('\nPROCESSING')
-        from process import process
         table_to_process = select_table(table, which='new', col_check='process', col_needed='file')
         if table_to_process.empty:
             print('no new files')
@@ -98,10 +100,9 @@ if __name__ == '__main__':
                 table.loc[table['file'] == f, process_columns] = process_values
             table = update_table(table, table_name, data_ext)
             table.sort_values(by='datetime', inplace=True)  # based on updated datetime column
-
+    print('here')
     if do_invert:
         print('\nINVERSION')
-        from invert import invert
         table_to_invert = select_table(table, which='new', col_check='invert', col_needed='finv')
         if table_to_invert.empty:
             print('no new files')
@@ -118,7 +119,6 @@ if __name__ == '__main__':
 
     if do_plot2d:
         print('\nPLOT')
-        from plot2d import plot2d
         table_to_plot = select_table(table, which='all', col_check='plot', col_needed='fvtk')
         if table_to_plot.empty:
             print('no new files')
