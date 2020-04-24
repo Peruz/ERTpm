@@ -3,6 +3,11 @@ import argparse
 import numpy as np
 import pandas as pd
 import pyvista as pv
+import matplotlib.pyplot as plt
+import matplotlib
+import matplotlib.dates as mdates
+import seaborn
+import datetime
 
 def get_cmd():
     """ get command line arguments for data processing """
@@ -51,11 +56,9 @@ def init_table(ds, vols, vtk_col, datetime_col):
     file_vtk = ds[vtk_col].to_numpy()
     file_vtk = np.tile(file_vtk, (nv, 1))
     file_vtk = file_vtk.flatten('F')
-    table['vtk_name'] = file_vtk
     file_datetime = ds[datetime_col].to_numpy()
     file_datetime = np.tile(file_datetime, (nv, 1))
     file_datetime = file_datetime.flatten('F')
-    table['datetime'] = file_datetime
     # coords
     vols_coord = vols.to_numpy()
     vols_coord = np.tile(vols_coord, (nds, 1))
@@ -65,14 +68,67 @@ def init_table(ds, vols, vtk_col, datetime_col):
     table = pd.DataFrame(table, columns=columns)
     return(table)
 
-def find_rho(table):
-    df_grouped_files = table.groupby('vtk_name')
-    #TODO
+def add_avg_to_table(table, rho):
+    """ table has the file names and the boundaries of the regions
+    we group by vtk file, to read it only once for all regions
+    for each vtk file, we loop through the regions, find the average, add it to table
+    """
+    grouped_table = table.groupby('vtk_name')
+    for name, group in grouped_table:
+        xyzr = get_xyzr(name, rho)
+        for i, r in group.iterrows():
+            avg, num = get_region_info(xyzr, r)
+            table.loc[i, 'ravg'] = avg
+            table.loc[i, 'rnum'] = num
+    return(table)
+
+def get_xyzr(fName, rho):
+    """ read vtk and extract value and center of each cell in it
+    """
+    mesh = pv.read(fName)
+    rho = mesh[rho]
+    centers = mesh.cell_centers().points
+    xyzr = np.column_stack((centers, rho))
+    xyzr = pd.DataFrame(xyzr, columns=['x', 'y', 'z', 'r'])
+    return(xyzr)
+
+def get_region_info(xyzr, r):
+    """ xyzr contains the data, table contains the regions """
+    region_cells = xyzr[(xyzr['x'].between(r['xmin'], r['xmax'])) &
+                        (xyzr['y'].between(r['ymin'], r['ymax']))]# &
+                        #(xyzr['z'].between(r['zmin'], r['zmax']))]
+    r_avg = region_cells['r'].mean()
+    r_num = len(region_cells)
+    return(r_avg, r_num)
+
+
+def plot_seaborn(df, x, y, hue, output_name):
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6.5))
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    df['datetimems'] = pd.to_datetime(df['datetime'], unit='ms')
+    seaborn.scatterplot(data=df, x=x, y=y, ax=ax, s=90, hue=df[hue], alpha=1, legend='full')
+    locator = matplotlib.dates.AutoDateLocator(minticks=5, maxticks=20)
+    formatter = mdates.ConciseDateFormatter(locator)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    fig.autofmt_xdate()
+    ax.set_xlim([datetime.date(2019, 9, 1), datetime.date(2020, 5, 1)])
+    ax.set_xlabel('time')
+    ax.set_ylabel('rho')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(output_name, dpi=600)
+    plt.show()
+
 
 def _analysis_(args):
     ds = read_csv_datasets(args.csv_datasets)
     vols = read_csv_vols(args.csv_vols)
     table = init_table(ds, vols, args.vtk_col, args.datetime_col)
+    table = add_avg_to_table(table, args.rho)
+    plot_seaborn(table, x='datetime', y='ravg', hue='vol_name', output_name='test.png')
+    plot_datetime(table, 'ravg', 'test.png')
+    plt.show()
 
 def analysis(**kargs):
     cmd_args = get_cmd()
