@@ -56,6 +56,8 @@ def select_table(table, which, col_check, col_needed):
         if which == 'all':
             files = table
         elif which == 'new':
+            if col_check is None:
+                raise ValueError('to check col_check for new files, col_check cannot be None')
             files = table[pd.isnull(table[col_check])]
         elif table['file'].str.contains(which).any():
             files = table.loc[table['file'] == which]
