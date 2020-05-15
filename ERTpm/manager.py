@@ -15,16 +15,16 @@
 
 ------
 notes:
-* some defaults values are given for convenience but use import * to avoid depending on module name
+* some defaults values are given for convenience
+but use import * to avoid depending on module name
 """
 
 import os
-import re
 import pandas as pd
-import numpy as np
 from ERTpm.invert import invert
 from ERTpm.process import process
 from ERTpm.plot2d import plot2d
+
 
 def init_table(table_name, table_headers, table_dtypes):
     """ init table, read existing or create one and save it """
@@ -36,6 +36,7 @@ def init_table(table_name, table_headers, table_dtypes):
         table.to_csv(table_name, index=False)
     return(table)
 
+
 def update_table(table, table_name, data_ext):
     """ check direcotry and update existing table, both file and dataframe """
     dir_files = [f for f in os.listdir() if f.endswith(data_ext)]
@@ -45,11 +46,12 @@ def update_table(table, table_name, data_ext):
     table.to_csv(table_name, index=False)
     return(table)
 
+
 def select_table(table, which, col_check, col_needed):
     """
     which (str, list): whether to keep all, new, or only specific data
     col_check (str): check among available data if already done or not
-    col_needed (str): data needed for action, e.g., cannot invert if not processed
+    col_needed (str): data needed for action, cannot invert if not processed
     """
     table = table.dropna(subset=[col_needed])
     if isinstance(which, str):
@@ -62,17 +64,19 @@ def select_table(table, which, col_check, col_needed):
         elif table['file'].str.contains(which).any():
             files = table.loc[table['file'] == which]
         else:
-            raise ValueError(whcih, ' is not a valid string [new, all, filename]')
+            raise ValueError(which,
+                             ' is not a valid string [new, all, filename]')
     else:
         files = table[table['file'].isin(which)]
     return(files)
 
+
 # some default values
 table_name = 'ert_datasets.txt'
 table_headers = ['file', 'datetime', 'process', 'invert', 'plot', 'fcsv', 'finv', 'fvtk', 'fpng']
-table_dtypes={'file': str, 'datetime': 'datetime64[ns]',
-              'process': bool, 'invert': bool, 'plot': bool,
-              'fcsv': str, 'finv': str, 'fvtk': str, 'fpng': str}
+table_dtypes = {'file': str, 'datetime': 'datetime64[ns]',
+                'process': bool, 'invert': bool, 'plot': bool,
+                'fcsv': str, 'finv': str, 'fvtk': str, 'fpng': str}
 
 if __name__ == '__main__':
     do_process = True
@@ -91,10 +95,13 @@ if __name__ == '__main__':
             print('no new files')
         else:
             for i, r in table_to_process.iterrows():
-                f =r['file']
-                if 'GRAD' in f: k_file = 'kfiles/sim_grad_nowen.data'
-                elif 'DD' in f: k_file = 'kfiles/sim_dd2.data'
-                else: raise ValueError('no file with geometric factors for this file name')
+                f = r['file']
+                if 'GRAD' in f:
+                    k_file = 'kfiles/sim_grad_nowen.data'
+                elif 'DD' in f:
+                    k_file = 'kfiles/sim_dd2.data'
+                else:
+                    raise ValueError('no file with geometric factors for this file name')
                 fyield = process(fName=f, k_file=k_file, rec=5, rhoa=(0, 1E+3), w_rhoa=True)
                 fcsv, finv, datetime = next(fyield)
                 process_columns = ['process', 'fcsv', 'finv', 'datetime']
@@ -102,7 +109,7 @@ if __name__ == '__main__':
                 table.loc[table['file'] == f, process_columns] = process_values
             table = update_table(table, table_name, data_ext)
             table.sort_values(by='datetime', inplace=True)  # based on updated datetime column
-    print('here')
+
     if do_invert:
         print('\nINVERSION')
         table_to_invert = select_table(table, which='new', col_check='invert', col_needed='finv')

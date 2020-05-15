@@ -1,10 +1,52 @@
+"""
+using pygimli:
+......................................................................................
+MethodManager    -->           | Inversion     ->                     |  RVector
+framework/methodManager.py     | frameworks/inversion.py              |  gimli c core
+                               | ertmgr.fw
+                               | also as ertmgr.inv
+                               | ert.fw.model also as ertmgr.model
+--------------------------
+    ^
+    |
+--------------------------         -----------------
+MeshMesthodManager                |MeshModeling
+framework/methodManager.py        |frameworks/modelling.py
+                                  |
+this class calls                  |this class defines drawModel()
+the inversion,                    |called by ergmgr.showModel()
+delegating to Inversion,          |and calling pg.viewer.showMesh()
+which is inhereted from           |
+MethodManager().                  |
+get rho from:
+m = self.fw.model
+p = self.paraModel()
+the two are the same, same memory
+they are pg.RVector
+can convert to numpy
+p.array() or np.array(p)
+can print
+print(p)
+
+--------------------------    ------------------
+    ^                            ^
+    |                            |
+--------------------------    ------------------
+ERTManager    -->            | ERTModelling
+physics/ert.py               | physics/ert.py
+                             | ertmgr.fop
+
+"""
+
 import argparse
-import pybert as pb
 import pygimli as pg
+import pygimli.physics.ert as ert
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+from IPython import embed
+
 
 def get_cmd():
     """ get command line arguments for data processing """
@@ -37,6 +79,7 @@ def get_cmd():
     args = parse.parse_args()
     return(args)
 
+
 def update_args(cmd_args, dict_args):
     """ update cmd-line args with args from dict """
     args = get_cmd()
@@ -47,29 +90,34 @@ def update_args(cmd_args, dict_args):
             setattr(args, key, val)
     return(args)
 
+
 def check_args(args):
     """ check consistency of args """
     if args.ref is not None:
         if not os.path.exists(args.ref):
             raise FileNotFoundError('reference model not found')
-    if isinstance(args.fName, str): args.fName = [args.fName]
+    if isinstance(args.fName, str):
+        args.fName = [args.fName]
     return(args)
 
+
 # pareto
+
 
 def save_pareto_csv(lam_record, chi2_record, fout):
     """ save lambda and chi2 values to dataframe """
     pareto = pd.DataFrame({'lambda': lam_record, 'chi2': chi2_record})
     pareto.to_csv(fout, float_format='%6.3f')
 
-def save_pareto_vtk(ert, model_record, lam_record, chi2_record, fout):
+
+def save_pareto_vtk(ertmgr, model_record, lam_record, chi2_record, fout):
     """ save all to vtk """
-    ert.paraDomain.save('mesh_para')
-    mesh_para = pg.load('mesh_para.bms')
+    mesh = ertmgr.paraDomain
     for m, l, c in zip(model_record, lam_record, chi2_record):
         model_name = '{:.2f}_{:.2f}'.format(l, c)
-        mesh_para.addExportData(model_name, m)
-    mesh_para.exportVTK(fout)
+        mesh.addData(model_name, m)
+    mesh.exportVTK(fout)
+
 
 def plot_pareto(fcsv, fpng):
     pareto = pd.read_csv(fcsv)
@@ -79,23 +127,24 @@ def plot_pareto(fcsv, fpng):
 
 # vtk
 
-def save_inv_vtk(ert, fout):
-    """ after the inversion ert instance contains: paradomain, resistivity, and coverage.  """
-    res = ert.resistivity
-    cov = ert.coverageDC()
-    ert.paraDomain.save('mesh_para')
-    mesh_para = pg.load('mesh_para.bms')
-    mesh_para.addExportData('res', res)
-    mesh_para.addExportData('cov', cov)
-    mesh_para.exportVTK(fout)
+
+def save_inv_vtk(ertmgr, fout):
+    mesh = ertmgr.paraDomain
+    res = ertmgr.paraModel().array()
+    cov = ertmgr.coverage()
+    mesh.addData('res', res)
+    mesh.addData('cov', cov)
+    mesh.exportVTK(fout)
+
 
 def plot_inv(fvtk, fpng, cm, cM):
-    data = pg.load(fvtk)
-    rho = data.exportData('res')
-    cov = data.exportData('cov')
-    fig = plt.figure(figsize=(10, 5))
+    mesh = pg.load(fvtk)
+    embed()
+    rho = mesh.data('res')
+    cov = mesh.data('cov')
+    _ = plt.figure(figsize=(10, 5))
     ax = plt.gca()
-    ax, cbar = pg.show(mesh=data, data=rho, coverage=cov, ax=ax, hold=True,
+    ax, cbar = pg.show(mesh=mesh, data=rho, coverage=cov, ax=ax, hold=True,
                        cMap='jet', cMin=cm, cMax=cM, colorBar=True,
                        showelectrodes=True, label='resistivity [ohm m]')
     ax.set_xlabel('m')
@@ -104,17 +153,20 @@ def plot_inv(fvtk, fpng, cm, cM):
     plt.savefig(fpng, dpi=600)
     plt.show()
 
+
 # misfit
 
-def save_misfit_csv(ert, fcsv):
+
+def save_misfit_csv(ertmgr, fcsv):
     """ save to csv the misfit measured data and fwd response """
-    fwd_response = np.array(ert.inv.response())
-    measured = np.array(ert.data['rhoa'])
+    fwd_response = np.array(ertmgr.inv.response.array())
+    measured = np.array(ertmgr.fop.data['rhoa'].array())
     misfit = pd.DataFrame({'fwd': fwd_response, 'measured': measured})
     misfit['misfit'] = misfit['fwd'] - misfit['measured']
     misfit['abs_misfit'] = misfit['misfit'].abs()
     misfit['percent_misfit'] = misfit['abs_misfit'] / misfit['measured'].abs()
     misfit.to_csv(fcsv)
+
 
 def plot_misfit(fcsv, fpng):
     misfit = pd.read_csv(fcsv)
@@ -131,13 +183,17 @@ def plot_misfit(fcsv, fpng):
     plt.savefig(fpng, dpi=600)
     plt.show()
 
+
 # INVERSION
 
+
 def update_lam(chi2_record, lam_record):
+    print("UPDATING LAMBDA")
     chi2_lam = {c: l for c, l in zip(chi2_record, lam_record)}
     last_chi2 = chi2_record[-1]
     last_lam = lam_record[-1]
     if last_chi2 > 1:
+        print("chi2 higher than 1, decreasing lambda")
         lowers = [c for c in chi2_record if c < 1]
         if lowers:
             lower_closest = max(lowers)
@@ -146,6 +202,7 @@ def update_lam(chi2_record, lam_record):
             lam_opposite = 0
         new_lam = (last_lam + lam_opposite) / 2
     elif last_chi2 < 1:
+        print("chi2 lower than 1, increasing lambda")
         highers = [c for c in chi2_record if c > 1]
         if highers:
             higher_closest = min(highers)
@@ -155,37 +212,63 @@ def update_lam(chi2_record, lam_record):
         new_lam = (last_lam + lam_opposite) / 2
     return(new_lam)
 
-def _invert_(fName, mesh, lam=20, err=0.05, opt=False, chi2_lims=(0.8, 1.2), ref=None):
+
+def _invert_(fName, mesh, lam=20, err=0.05, opt=False, chi2_lims=(0.8, 1.2), ref=False, ref_fName=None, i_max=10):
     """ args are passed to ERTManager, run optimize inversion, and saves to para_mesh """
-    data = pb.load(fName)
+    print('\n\n\n')
+    print('fName', fName)
+    print('opt: ', opt)
+    print('lam: ', lam)
+    print('\n')
+    data = pg.load(fName)
+    ertmgr = ert.ERTManager()
+    data['err'] = ertmgr.estimateError(data, absoluteError=0.001, relativeError=err)
     mesh = pg.load(mesh)
-    ert = pb.ERTManager()
-    ert.setData(data)
-    ert.setMesh(mesh)
-    if opt is None:
-        chi2 = (0, np.inf)
-    if ref is None:
+    ertmgr.fop.setMesh(mesh)
+
+    print('opt is: ', opt)
+    if opt:
+        chi_min = chi2_lims[0]
+        chi_max = chi2_lims[1]
+    else:
+        chi_min = 0
+        chi_max = np.inf
+
+    print('ref is: ', ref)
+    if ref:
+        ref_model_vtk = pg.load(ref_fName)
+        ref_model = ref_model_vtk.exportData('res')
+        smr = True
+    else:
         model = np.ones(len(mesh.cells()))
         smr = False
-    else:
-        ref_model_vtk = pg.load(f)
-        ref_model = data.exportData('res')
-        smr = True
+
+    print('preparing for inversion while loop')
     lam_record = []
     chi2_record = []
     model_record = []
     chi2 = -1
-    while not chi2_lims[0] < chi2 < chi2_lims[1]:
+
+    while not chi_min < chi2 < chi_max:
+        if len(chi2_record) > i_max:
+            raise ValueError("optimization reached maximum number of runs, i_max: ", i_max)
+        if chi2_record:
+            lam = update_lam(chi2_record, lam_record)
+
         if ref:
-            model = ref_model  # keep using the reference model and not the last model
-        res = ert.invert(err=err, lam=lam, startModel=model, startModelIsReference=smr)
-        chi2 = ert.inv.chi2()
+            _ = ertmgr.invert(data=data, lam=lam, startModel=ref_model, startModelIsReference=smr, verbose=True)
+        else:
+            _ = ertmgr.invert(data=data, lam=lam, verbose=True)
+
+        chi2 = ertmgr.inv.chi2()
         chi2_record.append(chi2)
-        model = ert.inv.model()
+        model = ertmgr.inv.model
         model_record.append(model)
         lam_record.append(lam)
-        lam = update_lam(chi2_record, lam_record)
-    return(ert, lam_record, chi2_record, model_record)
+        print('chi2 record: ', chi2_record)
+        print('lambda record: ', lam_record)
+    return(ertmgr, lam_record, chi2_record, model_record)
+
 
 def invert(**kargs):
     cmd_args = get_cmd()
@@ -202,22 +285,27 @@ def invert(**kargs):
         out_pareto_png = os.path.join(args.pareto_dir, f_root + args.pareto_png)
         out_misfit_png = os.path.join(args.misfit_dir, f_root + args.misfit_png)
         out_misfit_csv = os.path.join(args.misfit_dir, f_root + args.misfit_csv)
-        if not os.path.isdir(args.pareto_dir): os.mkdir(args.pareto_dir)
-        if not os.path.isdir(args.misfit_dir): os.mkdir(args.misfit_dir)
-        if not os.path.isdir(args.inv_dir): os.mkdir(args.inv_dir)
+        if not os.path.isdir(args.pareto_dir):
+            os.mkdir(args.pareto_dir)
+        if not os.path.isdir(args.misfit_dir):
+            os.mkdir(args.misfit_dir)
+        if not os.path.isdir(args.inv_dir):
+            os.mkdir(args.inv_dir)
 
-        ert, r_lam, r_chi2, r_model = _invert_(fName=f, mesh=args.mesh, lam=args.lam,
-                                               err=args.err, opt=args.opt,
-                                               chi2_lims=args.chi2_lims, ref=args.ref)
-        save_inv_vtk(ert, out_inv_vtk)
-        save_misfit_csv(ert, out_misfit_csv)
-        save_pareto_vtk(ert, r_model, r_lam, r_chi2, out_pareto_vtk)
+        ertmgr, r_lam, r_chi2, r_model = _invert_(fName=f, mesh=args.mesh, lam=args.lam,
+                                                  err=args.err, opt=args.opt,
+                                                  chi2_lims=args.chi2_lims, ref=args.ref)
+        save_inv_vtk(ertmgr, out_inv_vtk)
+        save_misfit_csv(ertmgr, out_misfit_csv)
+        save_pareto_vtk(ertmgr, r_model, r_lam, r_chi2, out_pareto_vtk)
         save_pareto_csv(r_lam, r_chi2, out_pareto_csv)
         plot_inv(out_inv_vtk, out_inv_png, 2, 12)
         plot_misfit(out_misfit_csv, out_misfit_png)
         plot_pareto(out_pareto_csv, out_pareto_png)
-        if args.keep_lam: args.lam = r_lam[-1]
+        if args.keep_lam:
+            args.lam = r_lam[-1]
         yield(out_inv_vtk)
+
 
 if __name__ == '__main__':
     invert()

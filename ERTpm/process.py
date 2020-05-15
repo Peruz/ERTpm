@@ -1,20 +1,24 @@
-""" ERT PROCESSING
+"""
+ERT PROCESSING
 it gets arguments from cmd-line and/or dictionary (e.g., ert manager script)
 it uses a ERT processing class that delegates to two dataframes for data and elec tables
-it filters the data based on args; set very loose args values to avoid filtering.  """
+it filters the data based on args; set very loose args values to avoid filtering.
+"""
 
 import os
-import re
 import argparse
 import pandas as pd
 import numpy as np
 import warnings
 import matplotlib.pyplot as plt
-import itertools
 
-try: from numba import jit
-except ImportError: numba_opt = False
-else: numba_opt = True
+try:
+    from numba import jit
+except ImportError:
+    numba_opt = False
+else:
+    numba_opt = True
+
 
 def get_cmd():
     """ get command line arguments for data processing """
@@ -29,7 +33,7 @@ def get_cmd():
     main.add_argument('-dir_proc', type=str, help='output directory', default='processing')
     # FILTERS
     filters.add_argument('-ctc', type=float, default=1E+5, help='max ctc, ohm')
-    filters.add_argument('-stk', type=float, default=5, help='max stacking err, pct')
+    filters.add_argument('-stk', type=float, default=20, help='max stacking err, pct')
     filters.add_argument('-v', type=float, default=1E-5, help='min voltage, V')
     filters.add_argument('-rec', type=float, default=5, help='max reciprocal err, pct')
     filters.add_argument('-rec_couple', action='store_true', default=True, help='couple reciprocals')
@@ -51,6 +55,7 @@ def get_cmd():
     args = parse.parse_args()
     return(args)
 
+
 def update_args(cmd_args, dict_args):
     """ update cmd-line args with args from dict """
     args = get_cmd()
@@ -61,68 +66,81 @@ def update_args(cmd_args, dict_args):
             setattr(args, key, val)
     return(args)
 
+
 def check_args(args):
     """ check consistency of args """
-    if isinstance(args.fName, str): args.fName = [args.fName]
+    if isinstance(args.fName, str):
+        args.fName = [args.fName]
     if (args.k_file is None and args.w_rhoa is True):
         error = """cannot calculate and write rhoa without k_file with geometric factors,
                 this wont break the code (default rhoa=None) but it may be and argument err"""
         raise ValueError(error)
     return(args)
 
+
 def output_file(old_fname, new_ext='.dat', directory='.'):
     """ return name for the output file and clean them if already exist """
     f, old_ext = os.path.splitext(old_fname)
     new_fname = f + new_ext
     new_dfname = os.path.join(directory, new_fname)
-    if not os.path.isdir(directory): os.mkdir(directory)
-    elif os.path.exists(new_dfname): os.remove(new_dfname)
+    if not os.path.isdir(directory):
+        os.mkdir(directory)
+    elif os.path.exists(new_dfname):
+        os.remove(new_dfname)
     return(new_dfname)
 
 
 def read_labrecque(f=None):
     """ read a labrecque data file an return data and electrode dataframes """
-    AppRes = False
     FreDom = False
+    AppRes = False
+    TW = 0
     with open(f) as fid:
         for i, l in enumerate(fid):
-            if 'Appres' in l: AppRes = True
-            elif 'FStcks' in l: FreDom = True
-            elif 'elec_start' in l: es = i + 1
-            elif 'elec_end' in l: ee = i - 1
-            elif 'data_start' in l: ds = i + 1
-            elif 'data_end' in l: de = i - 1
+            if 'FStcks' in l:
+                FreDom = True
+            elif 'Appres' in l:
+                AppRes = True
+            elif '#TW' in l:
+                TW += 2
+            elif 'elec_start' in l:
+                es = i + 1
+            elif 'elec_end' in l:
+                ee = i - 1
+            elif 'data_start' in l:
+                ds = i + 3
+            elif 'data_end' in l:
+                de = i - 1
     # data
-    c = {'! ID':'meas','A':'a','B':'b','M':'m','N':'n','Date_And_Time':'datetime'}
-    t = {'meas':'Int16','a':'Int16','b':'Int16','m':'Int16','n':'Int16','r':float,
-         'ip':float,'v':float,'ctc':float,'stk':float,'datetime':'datetime64[ns]'}
-    if FreDom:
-        c.update({'Amplitude,':'r','Real-Raw,':'v','Real-Std':'stk','Phase':'ip','ContctR':'ctc'})
-        r = '(?<!\\!)(?<!\D\\.)(?<!CH)(?<!GN)(?<!GN\s\d)\s+'
-    else:
-        c.update({'V/I,':'r','Amp.,':'v','Std.':'stk','ContactR':'ctc'})
-        r = '(?<!\\!)(?<!CH)(?<!GN)(?<!CH\s\d{2})(?<!IP)(?<!Window)\s+'
+    col_num = {'meas': 0, 'a': 2, 'b': 4, 'm': 6, 'n': 8}
+    if (not FreDom) and (not AppRes):
+        col_num.update({'r': 9, 'stk': 10, 'v': 11, 'ctc': 15 + TW, 'datetime': 16 + TW})
+    elif (FreDom) and (not AppRes):
+        col_num.update({'r': 9, 'ip': 10, 'v': 13, 'stk': 14, 'ctc': 20, 'datetime': 22})
+    elif (not FreDom) and (AppRes):
+        col_num.update({'r': 10, 'stk': 11, 'v': 12, 'ctc': 16 + TW, 'datetime': 17 + TW})
+    elif (FreDom) and (AppRes):
+        col_num.update({'r': 10, 'ip': 11, 'v': 14, 'stk': 15, 'ctc': 21, 'datetime': 23})
+    num_col = {value: key for key, value in col_num.items()}
+    col_type = {'meas': 'Int16', 'a': 'Int16', 'b': 'Int16', 'm': 'Int16', 'n': 'Int16', 'r': float,
+                'ip': float, 'v': float, 'ctc': float, 'stk': float, 'datetime': 'datetime64[ns]'}
     dn = de - ds
-    data = pd.read_csv(f, skiprows=ds, usecols=list(c), nrows=dn,
-                       sep=r, error_bad_lines=False, engine='python', index_col=False)
-    data.drop(0, inplace=True)
-    data.reset_index(drop=True, inplace=True)
-    data.rename(columns=c, inplace=True)
-    data['a'] = data['a'].str.extract('((?<=,)\d+)').astype(int)
-    data['b'] = data['b'].str.extract('((?<=,)\d+)').astype(int)
-    data['m'] = data['m'].str.extract('((?<=,)\d+)').astype(int)
-    data['n'] = data['n'].str.extract('((?<=,)\d+)').astype(int)
+    sep = r"\s+|,"
+    col_use = col_num.values()
+    data = pd.read_csv(f, header=None, index_col=False, skiprows=ds, nrows=dn,
+                       usecols=col_use, sep=sep, error_bad_lines=False, engine='python')
+    data.rename(columns=num_col, inplace=True)
     data['datetime'] = pd.to_datetime(data['datetime'], format='%Y%m%d_%H%M%S')
-    data['meas'] = data['meas'].astype(int)
-    if not FreDom: data['ip'] = np.NaN
-    data = data.astype(t)
     data['stk'] = data['stk'] / data['v'] * 100
+    if not FreDom:
+        data['ip'] = np.NaN
+    data = data.astype(col_type)
     # elec
     ec = {'El#': 'num', 'Elec-X': 'x', 'Elec-Y': 'y', 'Elec-Z': 'z'}
     et = {'num': 'Int16', 'x': float, 'y': float, 'z': float}
     en = ee - es
     elec = pd.read_csv(f, skiprows=es, usecols=list(ec), nrows=en,
-                       sep='\\,|\s+', index_col=False, engine='python')
+                       sep=r',|\s+', index_col=False, engine='python')
     elec = elec.rename(columns=ec)
     elec = elec.astype(et)
     return(elec, data)
@@ -144,15 +162,15 @@ def read_bert(k_file=None):
 
 
 def fun_rec(a: np.ndarray, b: np.ndarray, m: np.ndarray, n: np.ndarray, x: np.ndarray):
-    l = int(len(x))
+    len_sequence = int(len(x))
     rec_num = np.zeros_like(x, dtype=np.int64)
     rec_avg = np.zeros_like(x, dtype=np.float64)
     rec_err = np.zeros_like(x, dtype=np.float64)
     rec_fnd = np.zeros_like(x, dtype=np.int64)
-    for i in range(l):
+    for i in range(len_sequence):
         if rec_num[i] != 0:
             continue
-        for j in range(i + 1, l):
+        for j in range(i + 1, len_sequence):
             if (a[i] == m[j] and b[i] == n[j] and m[i] == a[j] and n[i] == b[j]):
                 avg = (x[i] + x[j]) / 2
                 err = abs(x[i] - x[j]) / abs(avg) * 100
@@ -167,6 +185,7 @@ def fun_rec(a: np.ndarray, b: np.ndarray, m: np.ndarray, n: np.ndarray, x: np.nd
                 break
     return(rec_num, rec_avg, rec_err, rec_fnd)
 
+
 if numba_opt:
     s = 'Tuple((int64[:],float64[:],float64[:],int64[:]))(int64[:],int64[:],int64[:],int64[:],float64[:])'
     fun_rec = jit(signature_or_function=s, nopython=True,
@@ -177,20 +196,20 @@ class ERTdataset():
     """ A dataset class composed of two dataframes data and elec.
     delegation to pandas dataframes is use for data and elec tables """
 
-    data_headers=['meas', 'a', 'b', 'm', 'n',
-               'r', 'k', 'rhoa', 'ip', 'v', 'ctc', 'stk', 'datetime',
-               'rec_num', 'rec_fnd', 'rec_avg', 'rec_err', 'rec_ip_avg', 'rec_ip_err',
-               'rec_valid', 'k_valid', 'rhoa_valid', 'v_valid', 'ctc_valid', 'stk_valid',
-               'valid']
-    data_dtypes={'meas': 'Int16', 'a': 'Int16', 'b': 'Int16', 'm': 'Int16', 'n': 'Int16',
-              'r': float, 'k': float, 'rhoa': float, 'ip': float,
-              'v': float, 'ctc': float, 'stk': float, 'datetime': 'datetime64[ns]',
-              'rec_num': 'Int16', 'rec_fnd': 'Int16', 'rec_avg': float, 'rec_err': float,
-              'rec_ip_avg': float, 'rec_ip_err': float,
-              'rec_valid': bool, 'k_valid': bool, 'rhoa_valid': bool, 'v_valid': bool,
-              'ctc_valid': bool, 'stk_valid': bool, 'valid': bool}
-    elec_headers=['num', 'x', 'y', 'z']
-    elec_dtypes={'num': 'Int16', 'x': float, 'y': float, 'z': float}
+    data_headers = ['meas', 'a', 'b', 'm', 'n',
+                    'r', 'k', 'rhoa', 'ip', 'v', 'ctc', 'stk', 'datetime',
+                    'rec_num', 'rec_fnd', 'rec_avg', 'rec_err', 'rec_ip_avg', 'rec_ip_err',
+                    'rec_valid', 'k_valid', 'rhoa_valid', 'v_valid', 'ctc_valid', 'stk_valid',
+                    'valid']
+    data_dtypes = {'meas': 'Int16', 'a': 'Int16', 'b': 'Int16', 'm': 'Int16', 'n': 'Int16',
+                   'r': float, 'k': float, 'rhoa': float, 'ip': float,
+                   'v': float, 'ctc': float, 'stk': float, 'datetime': 'datetime64[ns]',
+                   'rec_num': 'Int16', 'rec_fnd': 'Int16', 'rec_avg': float, 'rec_err': float,
+                   'rec_ip_avg': float, 'rec_ip_err': float,
+                   'rec_valid': bool, 'k_valid': bool, 'rhoa_valid': bool, 'v_valid': bool,
+                   'ctc_valid': bool, 'stk_valid': bool, 'valid': bool}
+    elec_headers = ['num', 'x', 'y', 'z']
+    elec_dtypes = {'num': 'Int16', 'x': float, 'y': float, 'z': float}
 
     def __init__(self, data=None, elec=None):
         self.data = None
@@ -256,18 +275,23 @@ class ERTdataset():
         elif (not rec_couple and rec_unpaired):
             self.data = self.data
 
-    def to_bert(self, fname, w_rhoa, w_ip, w_err, data_cols, elec_cols):
-        if w_rhoa: data_cols.append('rhoa')
-        if w_ip: data_cols.append('ip')
-        if w_err: data_cols.append(w_err)
+    def to_bert(self, fname, w_rhoa, w_ip, w_err, data_cols, elec_cols, rounding=6):
+        if w_rhoa:
+            data_cols.extend(['rhoa', 'k'])
+        if w_ip:
+            data_cols.append('ip')
+        if w_err:
+            data_cols.append(w_err)
         with open(fname, 'a') as file_handle:
             file_handle.write(str(len(self.elec)) + '\n')
             file_handle.write('# ' + ' '.join(elec_cols) + '\n')
             self.elec[elec_cols].to_csv(file_handle, sep=' ', index=None, header=False)
-            data_wrt = self.data[self.data.valid == 1][data_cols]
+            # data_wrt = self.data[self.data.valid == 1][data_cols]
+            data_wrt = self.data.loc[self.data['valid'] == 1, data_cols]
             file_handle.write(str(len(data_wrt)) + '\n')
             file_handle.write('# ' + ' '.join(data_cols) + '\n')
-            data_wrt.to_csv(file_handle, sep=' ', index=None, header=False)
+            print(data_wrt.info())
+            data_wrt.to_csv(file_handle, sep=' ', index=None, header=False, float_format='%g')
 
     def plot(self, fname, plot_columns, valid_column='valid', dir_proc='.'):
         colors_validity = {1: 'b', 0: 'r'}
@@ -289,6 +313,7 @@ class ERTdataset():
     def report(self, cols=['valid']):
         for c in cols:
             print('-----\n', self.data[c].value_counts())
+
 
 def __process__(f, args):
     """ process ERT file """
@@ -343,6 +368,7 @@ def __process__(f, args):
     fdatetime = ds.data.loc[0, 'datetime']
     return(fcsv, fdat, fdatetime)
 
+
 def process(**kargs):
     """ get args both as command line and as function arguments, then process files """
     cmd_args = get_cmd()
@@ -353,6 +379,7 @@ def process(**kargs):
         print(f)
         fcsv,  fdat, datetime = __process__(f, args)
         yield(fcsv, fdat, datetime)
+
 
 if __name__ == '__main__':
     process()
