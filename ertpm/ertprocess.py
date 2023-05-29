@@ -198,12 +198,17 @@ def process_rec(a: np.uint16, b: np.uint16, m: np.uint16, n: np.uint16, x: np.fl
             rec_fnd[j] = 2  # mark meas as reciprocal (keep 0 for unpaired)
             break
 
-    unpairedCnt, directCnt, reciprocalCnt = np.bincount(rec_fnd)
+    Cnts = np.bincount(rec_fnd)
+    if len(Cnts) == 1:
+        unpairedCnt = Cnts[0]
+        assert unpairedCnt == len(rec_fnd)
+    elif len(Cnts) == 3:
+        unpairedCnt, directCnt, reciprocalCnt = Cnts
+        assert directCnt == reciprocalCnt
+        assert directCnt + reciprocalCnt + unpairedCnt == len(rec_fnd)
+    else:
+        raise ValueError("failed reciprocity sanity check")
 
-    # embed()
-
-    # assert directCnt == reciprocalCnt
-    # assert directCnt + reciprocalCnt + unpairedCnt == len(x)
 
     return rec_num, rec_avg, rec_err, rec_fnd
 
