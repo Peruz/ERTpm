@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = 'ertpm'
+version = '1.0.0'
+authors = [
+    {name='Luca Peruzzo'},
+]
+description = 'ERT utils for processing and inverting data from different instruments'
+readme = 'README.md'
+requires-python = '>=3.8'
+dependencies = [ 
+        'pandas',
+        'numpy',
+        'IPython',
+        'scipy',
+        'matplotlib',
+        'datetime',
+        'argparse',
+]
+
+[project.scripts]
+ertprocess = 'ertpm.ertprocess:main'

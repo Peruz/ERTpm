@@ -1,0 +1,8 @@
+**/target
+**/build
+**/debug
+**/dist
+**/processing
+**/*.egg-info
+**/__pycache__
+**/*.spec
