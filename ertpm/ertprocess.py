@@ -17,17 +17,6 @@ from ertpm.ertio import read_bert
 from ertpm.ertio import read_labrecque
 from ertpm.ertio import read_electra_custom_complete
 from ertpm.ertutils import output_file
-from ertpm.ertsinusoids import sinusoids_fft
-from ertpm.ertsinusoids import sinusoids_fit
-from IPython import embed
-
-
-try:
-    from numba import jit
-except ImportError:
-    numba_opt = False
-else:
-    numba_opt = True
 
 
 def general_get_cmd():
@@ -35,7 +24,6 @@ def general_get_cmd():
     parse = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     main = parse.add_argument_group("main")
     filters = parse.add_argument_group("filters")
-    electra = parse.add_argument_group("electra")
     adjustments = parse.add_argument_group("adjustments")
     err = parse.add_argument_group("output")
     outputs = parse.add_argument_group("output")
@@ -43,16 +31,6 @@ def general_get_cmd():
     main.add_argument("-fname", type=str, help="data file to process", nargs="+")
     main.add_argument("-ftype", type=str, help="data type to process", default="syscal", choices=["syscal", "electra", "labrecque", "bert"])
     main.add_argument("-outdir", type=str, help="output directory", default="processing")
-
-    # ELECTRA
-    electra.add_argument(
-        "-method",
-        type=str,
-        default=["fft"],
-        choices=["M_m", "fft", "fit"],
-        help="quantities for measurement value, mean if more than 1",
-        nargs="+",
-    )
 
     # FILTERS
     filters.add_argument("-v_check", action="store_true", default=False, help="activate v analysis")
@@ -75,7 +53,7 @@ def general_get_cmd():
         nargs="+",
     )
     filters.add_argument("-rec_couple", action="store_true", default=True, help="couple reciprocals")
-    filters.add_argument("-rec_unpaired", action="store_true", default=False, help="keep unpaired")
+    filters.add_argument("-rec_unpaired", action="store_true", default=True, help="keep unpaired")
 
     filters.add_argument("-k_check", action="store_true", default=False, help="activate k analysis")
     filters.add_argument("-k_max", type=float, default=None, help="max geometrical factor, m")
@@ -89,8 +67,8 @@ def general_get_cmd():
     filters.add_argument("-elecbad", type=int, help="electrodes to remove", nargs="+")
 
     # ERR
-    err.add_argument("-err", default=3, type=float, help="add this value as a base error")
-    err.add_argument("-err_rec", action="store_true", help="if true, add reciprocal error")
+    err.add_argument("-err", default=5, type=float, help="add this value as a base error")
+    err.add_argument("-err_rec", action="store_true", default=True, help="if true, add reciprocal error")
     err.add_argument("-err_stk", action="store_true", help="if true, add stacking error")
 
     # OUTPUTS
@@ -121,31 +99,6 @@ def general_get_cmd():
         args["fname"] = [args.fname]
 
     return args
-
-
-def process_rec_noPolarity(a: np.uint16, b: np.uint16, m: np.uint16, n: np.uint16, x: np.float64) -> (np.uint16, np.float64, np.float64, np.uint8):
-    len_sequence = int(len(x))
-    rec_num = np.zeros_like(x, dtype=np.uint16)
-    rec_avg = np.zeros_like(x, dtype=np.float64)
-    rec_err = np.zeros_like(x, dtype=np.float64)
-    rec_fnd = np.zeros_like(x, dtype=np.uint8)
-    for i in range(len_sequence):
-        if rec_num[i] != 0:
-            continue
-        for j in range(i + 1, len_sequence):
-            if a[i] == m[j] and b[i] == n[j] and m[i] == a[j] and n[i] == b[j]:
-                avg = (x[i] + x[j]) / 2
-                err = abs(x[i] - x[j]) / abs(avg) * 100
-                rec_num[i] = j + 1
-                rec_num[j] = i + 1
-                rec_avg[i] = avg
-                rec_avg[j] = avg
-                rec_err[i] = err
-                rec_err[j] = err
-                rec_fnd[i] = 1  # mark meas as direct
-                rec_fnd[j] = 2  # mark meas as reciprocal (keep 0 for unpaired)
-                break
-    return rec_num, rec_avg, rec_err, rec_fnd
 
 
 def process_rec(a: np.uint16, b: np.uint16, m: np.uint16, n: np.uint16, x: np.float64) -> (np.uint16, np.float64, np.float64, np.uint8):
@@ -180,6 +133,11 @@ def process_rec(a: np.uint16, b: np.uint16, m: np.uint16, n: np.uint16, x: np.fl
             else:
                 continue
 
+            if rec_fnd[j] == 2:
+                print("a second direct measurement would match this reciprocal: ", j + 1)
+                print("ignore and look for a yet-to-match reciprocal")
+                continue
+
             avg = (x[i] + (polarity * x[j])) / 2
             err = abs(x[i] - (polarity * x[j])) / abs(avg) * 100
 
@@ -209,61 +167,7 @@ def process_rec(a: np.uint16, b: np.uint16, m: np.uint16, n: np.uint16, x: np.fl
     else:
         raise ValueError("failed reciprocity sanity check")
 
-
     return rec_num, rec_avg, rec_err, rec_fnd
-
-
-def numba_optimize_process_rec(process_rec):
-    s = "Tuple((uint16[:],float64[:],float64[:],uint8[:]))(uint16[:],uint16[:],uint16[:],uint16[:],float64[:])"
-    process_rec = jit(
-        signature_or_function=s,
-        nopython=True,
-        parallel=False,
-        cache=True,
-        fastmath=True,
-        nogil=True,
-    )(process_rec)
-    return process_rec
-
-
-def naive_pairs(l):
-    for c in l:
-        for r in l:
-            if c == r:
-                pass
-            else:
-                yield (c, r)
-
-
-def crossvalidity(df, summary_col_header="valid"):
-    """
-    1 is valid and 0 is invalid, the table will report the number of rejections
-    """
-    if summary_col_header not in df.columns.tolist():
-        df[summary_col_header] = df.all(axis=1)
-
-    cols = df.columns.tolist()
-
-    dfc = pd.DataFrame(index=cols, columns=cols)
-
-    # off-diagonal: number of data points that both filters reject
-    for p0, p1 in naive_pairs(cols):
-        common_rejections = np.sum((~df[[p0, p1]]).all(axis=1))
-        dfc.loc[p0, p1] = common_rejections
-        dfc.loc[p1, p0] = common_rejections
-
-    # diagonal: number of data points that only that filter reject
-    # remove the summary column, it would always match the other columns
-    # ns: no summary
-    cols.remove(summary_col_header)
-    dfns = ~df[cols]
-    sum_reject = dfns.sum(axis=1)
-    dfns_unique = dfns[sum_reject == 1]
-    colsns_unique_reject = dfns_unique.sum(axis=0)
-    for c in cols:
-        dfc.loc[c, c] = colsns_unique_reject[c]
-    dfc.loc[summary_col_header, summary_col_header] = np.sum(~df[summary_col_header])
-    return dfc
 
 
 def process(args):
@@ -273,27 +177,7 @@ def process(args):
         print(f)
 
         if args["ftype"] == "electra":
-            ds = read_electra_custom_complete(f)
-
-            sinusoids = ds.sinusoids.to_numpy()
-            if "fft" in args["method"]:
-                # fft
-                amp_fft = sinusoids_fft(sinusoids, ds.meta["freq"], ds.meta["curr_dur"], ds.meta["sampling"])
-                ds.data["fft_r"] = amp_fft / ds.data["curr"]
-                ds.data["fft_rhoa"] = ds.data["fft_r"] * ds.data["k"]
-                ds.data["fft_vs_picking_pcterr"] = abs(ds.data["fft_r"] - ds.data["r"]) / ((ds.data["r"] + ds.data["fft_r"]) / 2) * 100
-            if "fit" in args["method"]:
-                # fit
-                amp_fit = sinusoids_fit(sinusoids, ds.meta["freq"], ds.meta["curr_dur"], ds.meta["sampling"])
-                ds.data["fit_r"] = amp_fit / ds.data["curr"]
-                ds.data["fit_rhoa"] = ds.data["fit_r"] * ds.data["k"]
-                ds.data["fit_vs_picking_pcterr"] = abs(ds.data["fit_r"] - ds.data["r"]) / ((ds.data["r"] + ds.data["fit_r"]) / 2) * 100
-
-            # redefined quantities based on the chosen methods;e
-            chosen_r_columns = [mq + "_r" for mq in args["method"]]
-            ds.data["r"] = ds.data[chosen_r_columns].mean(axis=1).to_numpy()
-            ds.data["rhoa"] = ds.data["r"] * ds.data["k"]
-            ds.data["v"] = ds.data["r"] * ds.data["curr"]
+            ds = read_electra_custom_complete(f, methods=["fft"])
 
         elif args["ftype"] == "labrecque":
             ds = read_labrecque(f)
@@ -461,7 +345,6 @@ def process(args):
                 reciprocals_valid = reciprocals.loc[reciprocals["valid"] == True]
                 reciprocals_valid_needed = reciprocals_valid[reciprocals_valid["meas"].isin(directs_invalid_reciprocals)]
                 coupled = pd.concat((directs_valid, reciprocals_valid_needed))
-                embed()
                 if "r_rec_avg" in coupled.columns:
                     coupled["r_directs"] = coupled["r"]
                     coupled["r"] = coupled["r_rec_avg"]
@@ -472,9 +355,10 @@ def process(args):
                 ds.data = coupled
             elif args["rec_couple"] and args["rec_unpaired"]:
                 unpaireds = ds.data.loc[ds.data["rec_fnd"] == 0]
+                unpaireds_valid = unpaireds.loc[unpaireds["valid"] == True]
                 expected_err = coupled["rec_err"].quantile(0.66)
                 unpaireds["err"] = unpaireds["err"] + expected_err
-                ds.data = pd.concat([coupled, unpaireds])
+                ds.data = pd.concat([coupled, unpaireds_valid])
 
         # export
         if "simpeg" in args["export"]:

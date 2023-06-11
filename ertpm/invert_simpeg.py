@@ -38,11 +38,11 @@ mpl.rcParams.update({"font.size": 13})
 def get_cmd():
     parse = argparse.ArgumentParser()
     main = parse.add_argument_group('main')
-    main.add_argument('-f', type=str, help='data file to invert', nargs='+')
+    main.add_argument('-fname', type=str, help='data file to invert', nargs='+')
     main.add_argument('-topo', type=str, help='topography')
-    main.add_argument('-m', default=None, type=str, help='mesh file')
+    main.add_argument('-mesh', default=None, type=str, help='mesh file')
     main.add_argument('-type', default='volt', type=str, help='')
-    main.add_argument('-rho0', type=float, help='starting model conductivity', default=0.04)
+    main.add_argument('-rho0', type=float, help='starting model conductivity', default=100)
     main.add_argument('-dir_inv', type=str, help='output directory', default='inversions')
     main.add_argument('-clim', default=None, type=float, help='clim (min, max)', nargs='+')
     args = parse.parse_args()
@@ -106,7 +106,7 @@ def run_inv(fname, args):
     unique_locations = data.survey.unique_electrode_locations
     print('num data:', len(data.dobs))
 
-    if args.m is None:
+    if args.mesh is None:
 
         # mesh for 2.5D inversions, cellcentered
         min_spacing = np.min(np.diff(unique_locations[:, 0]))
@@ -158,7 +158,7 @@ def run_inv(fname, args):
     # else:
     #     mesh = load_mesh(args.mesh)
 
-    starting_conductivity = np.ones(mesh.nC) * np.log(1 / 200)
+    starting_conductivity = np.ones(mesh.nC) * np.log(1 / args.rho0)
     # starting_conductivity = np.ones(mesh.nC) * 1/ 20
 
     mesh.plot_image(starting_conductivity, grid=True)
@@ -177,7 +177,7 @@ def run_inv(fname, args):
     # Mapping
     mapping = maps.ExpMap(mesh)
     # defines which cells are active, and give fixes values to the non-activate
-    active_map = maps.InjectActiveCells(mesh, actind, np.log(args.rho0))
+    active_map = maps.InjectActiveCells(mesh, actind, np.log(1 / args.rho0))
     conductivity_map = active_map * maps.ExpMap()
 
     # Simulation,
@@ -374,7 +374,7 @@ def run_inv(fname, args):
 
 if __name__ == "__main__":
     args = get_cmd()
-    for f in args.f:
+    for f in args.fname:
         run_inv(f, args)
 
 # from ERTpm.ertds import ERTdataset

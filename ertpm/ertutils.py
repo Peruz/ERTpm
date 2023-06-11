@@ -5,6 +5,7 @@ import numpy as np
 from scipy.stats import skew
 import matplotlib.pyplot as plt
 from matplotlib.ticker import Locator
+import pandas as pd
 
 
 def find_threshold_minnonzero(values, min_threshold=0.00001):
@@ -12,7 +13,7 @@ def find_threshold_minnonzero(values, min_threshold=0.00001):
     min_nonzero = min([abs(v) for v in values if (v != 0) & (v is not None)])
     min_nonzero_rounded_log10 = 10 ** math.floor(np.log10(min_nonzero))
     threshold = max(min_nonzero_rounded_log10, min_threshold)
-    return(threshold)
+    return threshold
 
 
 def find_best_yscale(values, lim_var=0.8, lim_skew=0.8):
@@ -20,10 +21,10 @@ def find_best_yscale(values, lim_var=0.8, lim_skew=0.8):
     scale = 'linear'
     if len(values) == 0:
         warnings.warn('no values')
-        return(scale, None, None)
+        return (scale, None, None)
     elif len(values) <= 2:
         warnings.warn('only 2 values')
-        return(scale, None, None)
+        return (scale, None, None)
     vskewness = skew(values)
     vstd = np.std(values)
     vmedian = np.median(values)
@@ -33,7 +34,7 @@ def find_best_yscale(values, lim_var=0.8, lim_skew=0.8):
             scale = 'symlog'
         else:
             scale = 'log'
-    return(scale, vstdmedian, vskewness)
+    return (scale, vstdmedian, vskewness)
 
 
 class MinorSymLogLocator(Locator):
@@ -100,14 +101,54 @@ class MinorSymLogLocator(Locator):
 def output_file(old_fname, new_ext, directory='processing'):
     """ return name for the output file and clean them if already exist """
     head, tail = os.path.split(old_fname)
-    full_outdir = os.path.join(head, directory) 
+    full_outdir = os.path.join(head, directory)
     os.makedirs(full_outdir, exist_ok=True)
     stem, ext = os.path.splitext(tail)
     new_tail = stem + new_ext
     new_dfname = os.path.join(full_outdir, new_tail)
     if os.path.exists(new_dfname):
         os.remove(new_dfname)
-    return(new_dfname)
+    return new_dfname
+
+
+def naive_pairs(l):
+    for c in l:
+        for r in l:
+            if c == r:
+                pass
+            else:
+                yield (c, r)
+
+
+def crossvalidity(df, summary_col_header="valid"):
+    """
+    1 is valid and 0 is invalid, the table will report the number of rejections
+    """
+    if summary_col_header not in df.columns.tolist():
+        df[summary_col_header] = df.all(axis=1)
+
+    cols = df.columns.tolist()
+
+    dfc = pd.DataFrame(index=cols, columns=cols)
+
+    # off-diagonal: number of data points that both filters reject
+    for p0, p1 in naive_pairs(cols):
+        common_rejections = np.sum((~df[[p0, p1]]).all(axis=1))
+        dfc.loc[p0, p1] = common_rejections
+        dfc.loc[p1, p0] = common_rejections
+
+    # diagonal: number of data points that only that filter reject
+    # remove the summary column, it would always match the other columns
+    # ns: no summary
+    cols.remove(summary_col_header)
+    dfns = ~df[cols]
+    sum_reject = dfns.sum(axis=1)
+    dfns_unique = dfns[sum_reject == 1]
+    colsns_unique_reject = dfns_unique.sum(axis=0)
+    for c in cols:
+        dfc.loc[c, c] = colsns_unique_reject[c]
+    dfc.loc[summary_col_header, summary_col_header] = np.sum(~df[summary_col_header])
+    return dfc
 
 
 if __name__ == '__main__':

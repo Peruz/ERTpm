@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from ertpm.ertds import ERTdataset
-from IPython import embed
+from ertsinusoids import sinusoids_fft, sinusoids_fit
 
 
 class IncompleteFile(Exception):
@@ -79,18 +79,18 @@ def read_bert(f):
     with open(f) as fid:
         for i, l in enumerate(fid):
             if i == 0:
-                elecCnt = int(l.strip().split('#', 1)[0])
+                elecCnt = int(l.strip().split("#", 1)[0])
             if i == 1:
-                elecHeaderRaw = l.strip().replace('#', '').split(' ')
-                elecHeader = [c for c in elecHeaderRaw if c != ' ' and c != '']
+                elecHeaderRaw = l.strip().replace("#", "").split(" ")
+                elecHeader = [c for c in elecHeaderRaw if c != " " and c != ""]
             if i == elecCnt + 2:
-                dataCnt = int(l.strip().split('#', 1)[0])
+                dataCnt = int(l.strip().split("#", 1)[0])
             if i == elecCnt + 3:
-                dataHeaderRaw = l.strip().replace('#', '').split(' ')
-                dataHeader = [c for c in dataHeaderRaw if c != ' ' and c != '']
+                dataHeaderRaw = l.strip().replace("#", "").split(" ")
+                dataHeader = [c for c in dataHeaderRaw if c != " " and c != ""]
         expectedLineCnt = elecCnt + dataCnt + 4
         if i != expectedLineCnt - 1:
-            warnings.warn('wrong number of lines')
+            warnings.warn("wrong number of lines")
     elec = pd.read_csv(
         f,
         skiprows=2,
@@ -98,11 +98,11 @@ def read_bert(f):
         sep=r"\s+|,",
         skipinitialspace=True,
         index_col=None,
-        engine='python',
+        engine="python",
         header=None,
         names=elecHeader,
     )
-    elec.rename(columns={'#x': 'x'}, inplace=True)
+    elec.rename(columns={"#x": "x"}, inplace=True)
     data = pd.read_csv(
         f,
         skiprows=elecCnt + 4,
@@ -110,23 +110,22 @@ def read_bert(f):
         sep=r"\s+|,",
         skipinitialspace=True,
         index_col=None,
-        engine='python',
+        engine="python",
         header=None,
         names=dataHeader,
     )
-    data.rename(columns={'#a': 'a'}, inplace=True)
-    data.rename(columns={'rho': 'r'}, inplace=True)
-    data = data.astype({
-        'a': np.int16,
-        'b': np.int16,
-        'm': np.int16,
-        'n': np.int16,
-    })
+    data.rename(columns={"#a": "a"}, inplace=True)
+    data.rename(columns={"rho": "r"}, inplace=True)
+    data = data.astype(
+        {
+            "a": np.int16,
+            "b": np.int16,
+            "m": np.int16,
+            "n": np.int16,
+        }
+    )
     ertds = ERTdataset(data=data, elec=elec, meta=None)
-    embed()
     return ertds
-
-
 
 
 def read_labrecque(f):
@@ -245,7 +244,7 @@ def read_labrecque(f):
     return ertds
 
 
-def read_electra_custom_complete(f):
+def read_electra_custom_complete(f, methods=["fft"]):
     """
     read the COMPLETE output format
     return an ERTds with meta, elec, and data
@@ -385,9 +384,28 @@ def read_electra_custom_complete(f):
         ertds = ERTdataset(data=data, elec=elec, meta=meta)
         ertds.sinusoids = sinusoids
 
+        sinusoids = ertds.sinusoids.to_numpy()
+
+        if "fft" in methods:
+            # fft
+            amp_fft = sinusoids_fft(sinusoids, ertds.meta["freq"], ertds.meta["curr_dur"], ertds.meta["sampling"])
+            ertds.data["fft_r"] = amp_fft / ertds.data["curr"]
+            ertds.data["fft_rhoa"] = ertds.data["fft_r"] * ertds.data["k"]
+            ertds.data["fft_vs_picking_pcterr"] = abs(ertds.data["fft_r"] - ertds.data["r"]) / ((ertds.data["r"] + ertds.data["fft_r"]) / 2) * 100
+        if "fit" in methods:
+            # fit
+            amp_fit = sinusoids_fit(sinusoids, ertds.meta["freq"], ertds.meta["curr_dur"], ertds.meta["sampling"])
+            ertds.data["fit_r"] = amp_fit / ertds.data["curr"]
+            ertds.data["fit_rhoa"] = ertds.data["fit_r"] * ertds.data["k"]
+            ertds.data["fit_vs_picking_pcterr"] = abs(ertds.data["fit_r"] - ertds.data["r"]) / ((ertds.data["r"] + ertds.data["fit_r"]) / 2) * 100
+
+        # redefined quantities based on the chosen methods
+        chosen_r_columns = [mq + "_r" for mq in methods]
+        ertds.data["r"] = ertds.data[chosen_r_columns].mean(axis=1).to_numpy()
+        ertds.data["rhoa"] = ertds.data["r"] * ertds.data["k"]
+        ertds.data["v"] = ertds.data["r"] * ertds.data["curr"]
+
         return ertds
-
-
 
 
 def read_res2dinv_gen(f):
