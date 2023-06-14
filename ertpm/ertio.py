@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from ertpm.ertds import ERTdataset
-from ertsinusoids import sinusoids_fft, sinusoids_fit
+from ertpm.ertsinusoids import sinusoids_fft, sinusoids_fit
 
 
 class IncompleteFile(Exception):
@@ -83,6 +83,7 @@ def read_bert(f):
             if i == 1:
                 elecHeaderRaw = l.strip().replace("#", "").split(" ")
                 elecHeader = [c for c in elecHeaderRaw if c != " " and c != ""]
+                print(elecHeader)
             if i == elecCnt + 2:
                 dataCnt = int(l.strip().split("#", 1)[0])
             if i == elecCnt + 3:
