@@ -337,11 +337,11 @@ def process(args):
             # rec coupling, should stay between error analysis and export
             # 1 is the flag for direct and 0 for unpaired
             if args["rec_couple"]:
-                directs = ds.data.loc[ds.data["rec_fnd"] == 1]
+                directs = ds.data.loc[ds.data["rec_fnd"] == 1].copy()
                 directs_valid = directs.loc[directs["valid"] == True]
                 directs_invalid = directs.loc[directs["valid"] == False]
                 directs_invalid_reciprocals = directs_invalid["rec_num"].values
-                reciprocals = ds.data.loc[ds.data["rec_fnd"] == 2]
+                reciprocals = ds.data.loc[ds.data["rec_fnd"] == 2].copy()
                 reciprocals_valid = reciprocals.loc[reciprocals["valid"] == True]
                 reciprocals_valid_needed = reciprocals_valid[reciprocals_valid["meas"].isin(directs_invalid_reciprocals)]
                 coupled = pd.concat((directs_valid, reciprocals_valid_needed))
@@ -354,7 +354,7 @@ def process(args):
             if args["rec_couple"] and not args["rec_unpaired"]:
                 ds.data = coupled
             elif args["rec_couple"] and args["rec_unpaired"]:
-                unpaireds = ds.data.loc[ds.data["rec_fnd"] == 0]
+                unpaireds = ds.data.loc[ds.data["rec_fnd"] == 0].copy()
                 unpaireds_valid = unpaireds.loc[unpaireds["valid"] == True]
                 expected_err = coupled["rec_err"].quantile(0.66)
                 unpaireds["err"] = unpaireds["err"] + expected_err

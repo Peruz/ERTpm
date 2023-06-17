@@ -260,3 +260,6 @@ if __name__ == '__main__':
         save_pareto_vtk(ertmgr, model_record, lam_record, chi2_record, out_pareto_vtk)
         out_pareto_csv = output_file(data_file, '_pareto.csv', args.o)
         save_pareto_csv(lam_record, chi2_record, out_pareto_csv)
+
+        jacolog_outpath = output_file(data_file, '_jac_log.txt', args.o)
+        np.savetxt(jacolog_outpath, log_ind_abs_jaco, delimiter=',')

@@ -1,3 +1,4 @@
+from IPython import embed
 import os
 import warnings
 import numpy as np
@@ -29,21 +30,85 @@ def output_file(old_fname, new_ext=".dat", directory="."):
 def read_syscal(f):
     """
     Assuming only x coordinate is used
+    El-array Spa.1 Spa.2 Spa.3 Spa.4 Rho  Dev.  M   Sp   Vp   In   Stack Vab  Rab  Tx-Bat
+    ,El-array,Spa.1,Spa.2,Spa.3,Spa.4,Rho ,Dev., M  ,Sp  ,Vp  ,In  ,Stack,Vab ,Rab ,Tx-Bat
     """
-    colNames = ("a", "b", "m", "n", "rhoa", "stk", "v", "curr")
-    colIndexes = (2, 3, 4, 5, 6, 7, 10, 11)
-    colTypes = (float, float, float, float, float, float, float)
-    colTypes = dict(zip(colNames, colTypes))
-    data = pd.read_csv(
-        f,
-        header=None,
-        index_col=False,
-        skiprows=1,
-        usecols=colIndexes,
-        names=colNames,
-        dtype=colTypes,
-    )
-    # handle obseerved issues
+    with open(f) as fin:
+        l = fin.readline()
+        l = l.strip()
+        commaCnt = l.count(',')
+        if commaCnt > 4:
+            sep = ','
+            print('reading {} with comma sep'.format(f))
+        else:
+            sep = ' '
+            headerFile = l.strip().split()
+            headerFileCnt = len(headerFile)
+            lData = fin.readline()
+            dataCnt = len(lData.strip().split())
+            toMergeCnt = dataCnt - headerFileCnt
+            embed()
+            print('reading {} with white space sep'.format(f))
+
+
+    if sep == ',':
+        cols = {
+            "Spa.1": "a",
+            "Spa.2": "b",
+            "Spa.3": "m",
+            "Spa.4": "n",
+            "Rho ": "rhoa",
+            "Dev.": "stk",
+            " M  ": "ip",
+            "Sp  ": "sp",
+            "Vp  ": "v",
+            "In  ": "curr",
+            "Vab ": "Vab",
+            "Rab ": "ctc",
+            "Tx-Bat": "batt",
+        }
+
+        data = pd.read_csv(
+            f,
+            header=0,
+            index_col=False,
+            # skiprows=1,
+            # usecols=cols.keys(),
+        )
+
+        data = data.rename(columns=cols)
+
+    elif sep == ' ':
+
+        cols = {
+            "Spa.1": "a",
+            "Spa.2": "b",
+            "Spa.3": "m",
+            "Spa.4": "n",
+            "Rho": "rhoa",
+            "Dev.": "stk",
+            "M": "ip",
+            "Sp": "sp",
+            "Vp": "v",
+            "In": "curr",
+            "Vab": "Vab",
+            "Rab": "ctc",
+            "Tx-Bat": "batt",
+            "El-array": "El-array",
+        }
+
+        data = pd.read_csv(
+            f,
+            header=None,
+            index_col=False,
+            skiprows=1,
+            sep=r"\s+|,",
+        )
+        # elarray = data.loc[:, 0:toMergeCnt].astype(str).agg(' '.join, axis=1)
+        data = data.drop(range(toMergeCnt + 1), axis=1)
+        data.columns = headerFile[1:]
+        data = data.rename(columns=cols)
+
     if any(data["curr"] == 0):
         print(data[data["curr"] == 0])
         data = data[data["curr"] != 0]
