@@ -1,4 +1,4 @@
-from IPython import embed
+# from IPython import embed
 import os
 import warnings
 import numpy as np
@@ -27,12 +27,14 @@ def output_file(old_fname, new_ext=".dat", directory="."):
     return new_dfname
 
 
-def read_syscal(f):
+def read_terrabis(f, x0=0, dx=1):
     """
     Assuming only x coordinate is used
     El-array Spa.1 Spa.2 Spa.3 Spa.4 Rho  Dev.  M   Sp   Vp   In   Stack Vab  Rab  Tx-Bat
     ,El-array,Spa.1,Spa.2,Spa.3,Spa.4,Rho ,Dev., M  ,Sp  ,Vp  ,In  ,Stack,Vab ,Rab ,Tx-Bat
+    ,El-array,Rho (Ohm.m),Dev. Rho (%),SP (mV),VMN (mV),IAB (mA),Time (ms),Coef. k (m),NÂ° electrode A,NÂ° electrode B,NÂ° electrode M,NÂ° electrode N,Date
     """
+
     with open(f) as fin:
         l = fin.readline()
         l = l.strip()
@@ -47,7 +49,124 @@ def read_syscal(f):
             lData = fin.readline()
             dataCnt = len(lData.strip().split())
             toMergeCnt = dataCnt - headerFileCnt
-            embed()
+            print('reading {} with white space sep'.format(f))
+
+
+    if sep == ',':
+        cols = {
+            "N° electrode A": "a",
+            "N° electrode B": "b",
+            "N° electrode M": "m",
+            "N° electrode N": "n",
+            "Rho (Ohm.m) ": "rhoa",
+            "Dev. Rho (%)": "stk",
+            "SP (mV)": "sp",
+            "VMN (mV)": "v",
+            "IAB (mA)": "curr",
+        }
+
+        data = pd.read_csv(f, header=0, index_col=False)
+        print(data)
+        data = data.rename(columns=cols)
+
+    elif sep == ' ':
+
+        cols = {
+            "NÂ° electrode A": "a",
+            "NÂ° electrode B": "b",
+            "NÂ° electrode M": "m",
+            "NÂ° electrode N": "n",
+            "Rho (Ohm.m) ": "rhoa",
+            "Dev. Rho (%)": "stk",
+            "SP (mV)": "sp",
+            "VMN (mV)": "v",
+            "IAB (mA)": "curr",
+        }
+
+        data = pd.read_csv(
+            f,
+            index_col=False,
+            sep=r"\s+|,",
+            engine='python',
+        )
+        # elarray = data.loc[:, 0:toMergeCnt].astype(str).agg(' '.join, axis=1)
+        # data = data.drop(range(toMergeCnt + 1), axis=1)
+        # data.columns = headerFile[1:]
+        data = data.rename(columns=cols)
+
+    data = data.astype(
+        {
+            "a": np.int16,
+            "b": np.int16,
+            "m": np.int16,
+            "n": np.int16,
+        }
+    )
+
+    try:
+        if any(data["curr"] == 0):
+            print(data[data["curr"] == 0])
+            data = data[data["curr"] != 0]
+            warnings.warn("found and removed 0 current values")
+            data = data.reset_index(drop=True)
+
+        if any(data["curr"] == 9999.99):
+            print(data[data["curr"] == 9999.99])
+            data = data[data["curr"] != 9999.99]
+            warnings.warn("found and removed 9999.99 current values")
+            data = data.reset_index(drop=True)
+    except ValueError:
+        pass
+
+    data["r"] = data["v"] / data["curr"]
+    data.insert(0, "meas", np.arange(1, len(data) + 1))
+    # elec - define a basic geometry, to be updated anyway with the real geometry from file
+    elecX = pd.concat(
+        (data.a, data.b, data.m, data.n),
+        axis=0,
+        ignore_index=True,
+    ).unique()
+    elecXmax = max(elecX)
+    elecXmin = min(elecX)
+    elecXspacing = min(np.diff(elecX))
+    elecX = np.arange(elecXmin, elecXmax + elecXspacing, elecXspacing)
+    elecNums = np.arange(1, len(elecX) + 1, dtype=np.int16)
+    elec_dict = {}
+    for n, x in zip(elecNums, elecX):
+        elec_dict[x] = n
+    map_list = ["a", "b", "m", "n"]
+    for column in map_list:
+        data[column] = data[column].map(elec_dict)
+    elecZeros = np.zeros_like(elecX)
+    elecXfrom0 = elecX - elecXmin
+    elec = pd.DataFrame(data={"num": elecNums, "x": elecXfrom0, "y": elecZeros, "z": elecZeros})
+    meta = {}
+    meta["meas_tot"] = len(data)
+    ertds = ERTdataset(data=data, elec=elec, meta=meta)
+    ertds.calc_k_3d()
+    return ertds
+
+def read_syscal(f, x0=0, dx=1):
+    """
+    Assuming only x coordinate is used
+    El-array Spa.1 Spa.2 Spa.3 Spa.4 Rho  Dev.  M   Sp   Vp   In   Stack Vab  Rab  Tx-Bat
+    ,El-array,Spa.1,Spa.2,Spa.3,Spa.4,Rho ,Dev., M  ,Sp  ,Vp  ,In  ,Stack,Vab ,Rab ,Tx-Bat
+    """
+
+    with open(f) as fin:
+        l = fin.readline()
+        l = l.strip()
+        commaCnt = l.count(',')
+        if commaCnt > 4:
+            sep = ','
+            print('reading {} with comma sep'.format(f))
+        else:
+            sep = ' '
+            headerFile = l.strip().split()
+            headerFileCnt = len(headerFile)
+            lData = fin.readline()
+            dataCnt = len(lData.strip().split())
+            toMergeCnt = dataCnt - headerFileCnt
             print('reading {} with white space sep'.format(f))
 
 
@@ -68,14 +187,7 @@ def read_syscal(f):
             "Tx-Bat": "batt",
         }
 
-        data = pd.read_csv(
-            f,
-            header=0,
-            index_col=False,
-            # skiprows=1,
-            # usecols=cols.keys(),
-        )
-
+        data = pd.read_csv(f, header=0, index_col=False)
         data = data.rename(columns=cols)
 
     elif sep == ' ':
@@ -99,21 +211,38 @@ def read_syscal(f):
 
         data = pd.read_csv(
             f,
-            header=None,
             index_col=False,
-            skiprows=1,
             sep=r"\s+|,",
+            engine='python',
         )
         # elarray = data.loc[:, 0:toMergeCnt].astype(str).agg(' '.join, axis=1)
-        data = data.drop(range(toMergeCnt + 1), axis=1)
-        data.columns = headerFile[1:]
+        # data = data.drop(range(toMergeCnt + 1), axis=1)
+        # data.columns = headerFile[1:]
         data = data.rename(columns=cols)
 
-    if any(data["curr"] == 0):
-        print(data[data["curr"] == 0])
-        data = data[data["curr"] != 0]
-        warnings.warn("found and removed zero current values")
-        data = data.reset_index(drop=True)
+    data = data.astype(
+        {
+            "a": np.int16,
+            "b": np.int16,
+            "m": np.int16,
+            "n": np.int16,
+        }
+    )
+
+    try:
+        if any(data["curr"] == 0):
+            print(data[data["curr"] == 0])
+            data = data[data["curr"] != 0]
+            warnings.warn("found and removed 0 current values")
+            data = data.reset_index(drop=True)
+
+        if any(data["curr"] == 9999.99):
+            print(data[data["curr"] == 9999.99])
+            data = data[data["curr"] != 9999.99]
+            warnings.warn("found and removed 9999.99 current values")
+            data = data.reset_index(drop=True)
+    except ValueError:
+        pass
 
     data["r"] = data["v"] / data["curr"]
     data.insert(0, "meas", np.arange(1, len(data) + 1))
@@ -123,20 +252,24 @@ def read_syscal(f):
         axis=0,
         ignore_index=True,
     ).unique()
-    elecX = np.sort(elecX)
-    elecZeros = np.zeros_like(elecX)
+    elecXmax = max(elecX)
+    elecXmin = min(elecX)
+    elecXspacing = min(np.diff(elecX))
+    elecX = np.arange(elecXmin, elecXmax + elecXspacing, elecXspacing)
     elecNums = np.arange(1, len(elecX) + 1, dtype=np.int16)
-    elec = pd.DataFrame(data={"num": elecNums, "x": elecX, "y": elecZeros, "z": elecZeros})
-    # data - remap elec coordinates to number
+    elec_dict = {}
+    for n, x in zip(elecNums, elecX):
+        elec_dict[x] = n
     map_list = ["a", "b", "m", "n"]
-    elec_dict = elec.set_index("x").to_dict()["num"]
     for column in map_list:
         data[column] = data[column].map(elec_dict)
-    # set first elec to 0
-    elec["x"] = elec["x"] - min(elec["x"])
+    elecZeros = np.zeros_like(elecX)
+    elecXfrom0 = elecX - elecXmin
+    elec = pd.DataFrame(data={"num": elecNums, "x": elecXfrom0, "y": elecZeros, "z": elecZeros})
     meta = {}
     meta["meas_tot"] = len(data)
     ertds = ERTdataset(data=data, elec=elec, meta=meta)
+    ertds.calc_k_3d()
     return ertds
 
 
@@ -190,6 +323,8 @@ def read_bert(f):
             "n": np.int16,
         }
     )
+    if 'err' in data.columns:
+        data['err'] = data['err'] * 100
     ertds = ERTdataset(data=data, elec=elec, meta=None)
     return ertds
 
@@ -519,4 +654,83 @@ def read_res2dinv_gen(f):
     for column in map_list:
         data[column] = data[column].map(elec_dict)
     ertds = ERTdataset(data=data, elec=elec)
+    return ertds
+
+
+def read_terra(f):
+    with open(f) as fin:
+        l = fin.readline()
+        l = l.strip()
+        commaCnt = l.count(',')
+        if commaCnt > 4:
+            sep = ','
+            print('reading {} with comma sep'.format(f))
+        else:
+            raise IOError('cannot read this Terra file format')
+
+    if sep == ',':
+        cols = {
+            "xA (m)": "a",
+            "xB (m)": "b",
+            "xM (m)": "m",
+            "xN (m)": "n",
+            "Rho (Ohm.m)": "rhoa",
+            # "Dev. Rho (%)": "stk",
+            # "SP (mV)": "sp",
+            "VMN (mV)": "v",
+            "IAB (mA)": "curr",
+            # "Vab (V)": "Vab",
+            # "Rab (kOhm)": "ctc",
+            # "Tx-Bat (V)": "batt",
+        }
+
+
+        data = pd.read_csv(f, header=0, index_col=False, usecols=cols.keys())
+        data = data.rename(columns=cols)
+        data = data.loc[data['a'] != 99999.99, :]
+        data[['a', 'b', 'm', 'n']] = data[['a', 'b', 'm', 'n']].astype("Int16")
+        data = data.reset_index()
+
+    try:
+        if any(data["curr"] == 0):
+            print(data[data["curr"] == 0])
+            data = data[data["curr"] != 0]
+            warnings.warn("found and removed 0 current values")
+            data = data.reset_index(drop=True)
+
+        if any(data["curr"] == 9999.99):
+            print(data[data["curr"] == 9999.99])
+            data = data[data["curr"] != 9999.99]
+            warnings.warn("found and removed 9999.99 current values")
+            data = data.reset_index(drop=True)
+
+    except ValueError:
+        pass
+
+    data["r"] = data["v"] / data["curr"]
+    data.insert(0, "meas", np.arange(1, len(data) + 1, dtype=np.int16))
+    # elec - define a basic geometry, to be updated anyway with the real geometry from file
+    elecX = pd.concat(
+        (data.a, data.b, data.m, data.n),
+        axis=0,
+        ignore_index=True,
+    ).unique()
+    elecXmax = max(elecX)
+    elecXmin = min(elecX)
+    elecXspacing = min(np.diff(elecX))
+    elecX = np.arange(elecXmin, elecXmax + elecXspacing, elecXspacing)
+    elecNums = np.arange(1, len(elecX) + 1, dtype=np.int16)
+    elec_dict = {}
+    for n, x in zip(elecNums, elecX):
+        elec_dict[x] = n
+    map_list = ["a", "b", "m", "n"]
+    for column in map_list:
+        data[column] = data[column].map(elec_dict)
+    elecZeros = np.zeros_like(elecX)
+    elecXfrom0 = elecX - elecXmin
+    elec = pd.DataFrame(data={"num": elecNums, "x": elecXfrom0, "y": elecZeros, "z": elecZeros})
+    meta = {}
+    meta["meas_tot"] = len(data)
+    ertds = ERTdataset(data=data, elec=elec, meta=meta)
+    ertds.calc_k_3d()
     return ertds

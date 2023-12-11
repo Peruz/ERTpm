@@ -1,3 +1,5 @@
+import sys
+from IPython import embed
 import os
 import argparse
 import subprocess
@@ -87,10 +89,11 @@ def get_cmd():
     parameters.add_argument('-lam', type=float, help='starting lambda', default=20)
     parameters.add_argument('-err', type=float, help='overwrite data error', default=None)
     parameters.add_argument('-chi2_lims', type=float, help='chi2 (min, max)', nargs='+', default=(0.9, 1.2))
-    parameters.add_argument('-chi2_opt', action='store_true', help='chi2 optimization', default=True)
-    parameters.add_argument('-l1', action='store_true', help='L1 norm spatial regularization')
+    parameters.add_argument('-chi2_opt', action='store_true', help='chi2 optimization', default=False)
+    parameters.add_argument('-l1', action='store_true', help='RobustData, i.e., L1 norm spatial regularization', default=False)
     # GET ARGS
     args = parse.parse_args()
+
     return args
 
 
@@ -172,12 +175,15 @@ if __name__ == '__main__':
 
     args = get_cmd()
 
-    if args.m.endswith('geo'):
-        meshmsh = output_file(args.m, 'msh', args.o)
-        subprocess.call(["gmsh", "-format", "msh2", "-2", "-o", meshmsh, args.m])
-        mesh = readGmsh(meshmsh, verbose=args.v)
-    elif args.m.endswith('msh'):
-        mesh = readGmsh(args.m, verbose=args.v)
+    if args.m is not None:
+        if args.m.endswith('geo'):
+            meshmsh = output_file(args.m, 'msh', args.o)
+            subprocess.call(["gmsh", "-format", "msh2", "-2", "-o", meshmsh, args.m])
+            mesh = readGmsh(meshmsh, verbose=args.v)
+        elif args.m.endswith('msh'):
+            mesh = readGmsh(args.m, verbose=args.v)
+    else:
+        mesh = None
 
     if args.v:
         pg.show(mesh, markers=True)
@@ -185,7 +191,7 @@ if __name__ == '__main__':
 
     for data_file in args.f:
         data = pg.load(data_file)
-        data['k'] = ert.createGeometricFactors(data, numerical=True, mesh=mesh)
+        data['k'] = ert.createGeometricFactors(data, numerical=False, mesh=mesh)
         data['rhoa'] = data['r'] * data['k']
         if args.v:
             plt.plot(data['rhoa'], 'o')
@@ -202,7 +208,7 @@ if __name__ == '__main__':
         ertmgr = ert.ERTManager()
 
         if args.err:
-            data['err'] = ertmgr.estimateError(data, absoluteError=0.05, relativeError=args.err)
+            data['err'] = ertmgr.estimateError(data, absoluteError=0.02, relativeError=args.err)
             plt.plot(data['err'], data['k'], 'o')
             plt.show()
 
@@ -221,12 +227,15 @@ if __name__ == '__main__':
         i_max = 10
         model = None
 
+        if args.l1:
+            print('\n\nUse RobustData\n\n')
+
         while not chi_min < chi2 < chi_max:
 
             if len(chi2_record) > i_max:
                 continue
 
-            if chi2_record:
+            if len(chi2_record) > 0:
                 lam = update_lam(chi2_record, lam_record)
 
             _ = ertmgr.invert(
@@ -235,7 +244,7 @@ if __name__ == '__main__':
                 startModel=model,
                 verbose=True,
                 mesh=mesh,
-                robustData=True,
+                robustData=args.l1,
             )
 
             chi2 = ertmgr.inv.chi2()

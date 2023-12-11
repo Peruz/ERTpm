@@ -8,6 +8,75 @@ from matplotlib.ticker import Locator
 import pandas as pd
 
 
+def process_rec(a: np.uint16, b: np.uint16, m: np.uint16, n: np.uint16, x: np.float64) -> (np.uint16, np.float64, np.float64, np.uint8):
+    """
+    Reciprocal pairing and check with polarity.
+    1 2 3 4
+    a m n b d i
+    m a b n + j
+    m b a n - j
+    n a b m - j
+    n b a m + j
+    """
+    len_sequence = int(len(x))
+    rec_num = np.zeros_like(x, dtype=np.uint16)
+    rec_avg = np.zeros_like(x, dtype=np.float64)
+    rec_err = np.zeros_like(x, dtype=np.float64)
+    rec_fnd = np.zeros_like(x, dtype=np.uint8)
+    for i in range(len_sequence):
+        if rec_num[i] != 0:
+            continue
+        for j in range(i + 1, len_sequence):
+            polarity = 1
+
+            if a[i] == m[j] and b[i] == n[j] and m[i] == a[j] and n[i] == b[j]:
+                polarity = 1
+            elif a[i] == m[j] and b[i] == n[j] and m[i] == b[j] and n[i] == a[j]:
+                polarity = -1
+            elif a[i] == n[j] and b[i] == m[j] and m[i] == a[j] and n[i] == b[j]:
+                polarity = -1
+            elif a[i] == n[j] and b[i] == m[j] and m[i] == b[j] and n[i] == a[j]:
+                polarity = 1
+            else:
+                continue
+
+            if rec_fnd[j] == 2:
+                print("a second direct measurement would match this reciprocal: ", j + 1)
+                print("ignore and look for a yet-to-match reciprocal")
+                continue
+
+            avg = (x[i] + (polarity * x[j])) / 2
+            err = abs(x[i] - (polarity * x[j])) / abs(avg) * 100
+
+            if polarity == -1:
+                print("fixing polarity")
+                print(a[i], b[i], m[i], n[i], x[i], avg, err)
+                print(a[j], b[j], m[j], n[j], x[j], avg * polarity, err)
+
+            rec_num[i] = j + 1
+            rec_num[j] = i + 1
+            rec_avg[i] = avg
+            rec_avg[j] = avg * polarity
+            rec_err[i] = err
+            rec_err[j] = err
+            rec_fnd[i] = 1  # mark meas as direct
+            rec_fnd[j] = 2  # mark meas as reciprocal (keep 0 for unpaired)
+            break
+
+    Cnts = np.bincount(rec_fnd)
+    if len(Cnts) == 1:
+        unpairedCnt = Cnts[0]
+        assert unpairedCnt == len(rec_fnd)
+    elif len(Cnts) == 3:
+        unpairedCnt, directCnt, reciprocalCnt = Cnts
+        assert directCnt == reciprocalCnt
+        assert directCnt + reciprocalCnt + unpairedCnt == len(rec_fnd)
+    else:
+        raise ValueError("failed reciprocity sanity check")
+
+    return rec_num, rec_avg, rec_err, rec_fnd
+
+
 def find_threshold_minnonzero(values, min_threshold=0.00001):
     values = np.array(values)
     min_nonzero = min([abs(v) for v in values if (v != 0) & (v is not None)])

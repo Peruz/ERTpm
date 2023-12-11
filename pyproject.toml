@@ -19,7 +19,9 @@ dependencies = [
         'matplotlib',
         'datetime',
         'argparse',
+        'pyvista',
 ]
 
 [project.scripts]
 ertprocess = 'ertpm.ertprocess:main'
+ertplot2d_vtk = 'ertpm.plot2d_vtk:main'

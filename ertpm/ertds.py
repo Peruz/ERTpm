@@ -1,3 +1,16 @@
+from IPython import embed
+import os
+import pandas as pd
+import numpy as np
+import warnings
+import matplotlib.pyplot as plt
+from matplotlib.ticker import SymmetricalLogLocator
+from ertpm.ertutils import MinorSymLogLocator
+from ertpm.ertutils import find_threshold_minnonzero
+from ertpm.ertutils import find_best_yscale
+from ertpm.ertutils import output_file
+from ertpm.ertutils import process_rec
+
 """
 ERT Dataset class (also ertds or ds)
 
@@ -25,16 +38,6 @@ err is express as percentage error = (abs(a - b) / abs(mean(a, b))) * 100
 err fractional = err / 100
 err sd = err * meas / 2 / 100
 """
-
-import pandas as pd
-import numpy as np
-import warnings
-import matplotlib.pyplot as plt
-from matplotlib.ticker import SymmetricalLogLocator
-from ertpm.ertutils import MinorSymLogLocator
-from ertpm.ertutils import find_threshold_minnonzero
-from ertpm.ertutils import find_best_yscale
-from ertpm.ertutils import output_file
 
 
 class ERTdataset:
@@ -114,20 +117,27 @@ class ERTdataset:
         else:
             self.meta = {}
 
+    def __repr__(self):
+        t = '\n'.join((self.meta.__repr__(), self.elec.__repr__(), self.data.__repr__()))
+        return t
+
     def __str__(self):
-        ertds_string = "\n".join(
+        t = '\n'.join((self.meta.__repr__(), self.elec.__repr__(), self.data.__repr__()))
+        return t
+
+    def to_csv(self, fcsv):
+        ertds_csv = "\n".join(
             (
-                "--- --- ---",
                 "meta",
                 "\n".join("{}\t{}".format(k, v) for k, v in sorted(self.meta.items(), key=lambda t: str(t[0]))),
                 "elec",
-                self.elec.to_string(max_rows=1e5),
+                self.elec.to_csv(index=False),
                 "data",
-                self.data.to_string(max_rows=1e5),
-                "--- --- ---",
+                self.data.to_csv(index=False),
             )
         )
-        return ertds_string
+        with open(fcsv, "w") as fopen:
+            print(ertds_csv, file=fopen)
 
     def init_EmptyData(self, data_len=None):
         """wrapper to create empty (None) data dataframe with the proper headers and datatypes."""
@@ -145,11 +155,13 @@ class ERTdataset:
 
     def set_k(self, data_k):
         """get and set k from a vector of floating numbers"""
+
         if len(self.data) == len(data_k):
             self.data["k"] = data_k["k"]
+
         elif len(self.data) < len(data_k):
             warnings.warn(
-                "len k {kl} != len data {dl}; possibly the wrong k are used or the data are incomplete".format(
+                "len k {kl} > len data {dl}: wrong k file or incomplete data".format(
                     dl=len(self.data), kl=len(data_k)
                 )
             )
@@ -158,55 +170,103 @@ class ERTdataset:
             self.data = self.data.merge(data_k[abmnk], on=abmn, how="left", suffixes=("", "_"))
             self.data["k"] = self.data["k_"]
             self.data.drop(columns="k_", inplace=True)
+
         elif len(data_k) < len(self.data):
-            raise IndexError("len k {kl} < len data {dl}; possibly the wrong k file".format(dl=len(self.data), kl=len(data_k)))
-
-    def calc_1d_k(self, coord="x"):
-        map_list = ["a", "b", "m", "n"]
-        elec_dict = self.elec.set_index("num").to_dict()[coord]
-        data_coord = self.data[map_list]
-        for column in map_list:
-            data_coord[column] = data_coord[column].map(elec_dict)
-        data_coord = data_coord.to_numpy()
-        k = (
-            2
-            * 3.14
-            * (
-                (1 / abs(data_coord[:, 0] - data_coord[:, 2]))
-                - (1 / abs(data_coord[:, 0] - data_coord[:, 3]))
-                - (1 / abs(data_coord[:, 1] - data_coord[:, 2]))
-                + (1 / abs(data_coord[:, 1] - data_coord[:, 3]))
+            raise IndexError(
+                "len k {kl} < len data {dl}: probably the wrong k file".format(
+                    dl=len(self.data), kl=len(data_k)
+                )
             )
-            ** -1
-        )
-        self.data["k"] = k
 
-    def calc_k(self):
-        """
-        analytical solution,
-        valid only for a flat-earth model
-        with surface electrodes.
-        If all the coordiantes are not null, it raises an error.
-        If 2 or 1 coordinates are not null, it uses those as surface coordinates.
-        """
-        map_list = ["a", "b", "m", "n"]
-        elec_dict = self.elec.set_index("num").to_dict()["x", "y", "z"]
-        data_coord = self.data[map_list]
-        for column in map_list:
-            data_coord[column] = data_coord[column].map(elec_dict)
-        data_coord = data_coord.to_numpy()
-        k = (
-            2
-            * 3.14
-            * (
-                (1 / abs(data_coord[:, 0] - data_coord[:, 2]))
-                - (1 / abs(data_coord[:, 0] - data_coord[:, 3]))
-                - (1 / abs(data_coord[:, 1] - data_coord[:, 2]))
-                + (1 / abs(data_coord[:, 1] - data_coord[:, 3]))
-            )
-            ** -1
-        )
-        self.data["k"] = k
+    def calc_k_1d(self, coord="x"):
+        elec = self.elec
+        data = self.data
+        enx = elec.set_index('num').to_dict()[coord]
+        apos = elec[coord][data['a'].map(enx)].to_numpy()
+        bpos = elec[coord][data['b'].map(enx)].to_numpy()
+        mpos = elec[coord][data['m'].map(enx)].to_numpy()
+        npos = elec[coord][data['n'].map(enx)].to_numpy()
+        AM = apos - mpos
+        BM = bpos - mpos
+        AN = apos - npos
+        BN = bpos - npos
+        AM[AM == 0] = np.nan
+        BM[BM == 0] = np.nan
+        AN[AN == 0] = np.nan
+        BN[BN == 0] = np.nan
+        k = 2 * np.pi / ((1 / AM) - (1 / BM) - (1 / AN) + (1 / BN))
+        self.data['k'] = k
+
+    def calc_k_3d(self):
+        """ assuming flat 2D surface """
+        elec = self.elec
+        data = self.data
+        enx = elec.set_index('num').to_dict()['x']
+        eny = elec.set_index('num').to_dict()['y']
+        enz = elec.set_index('num').to_dict()['z']
+        aposx = data['a'].map(enx).to_numpy()
+        aposy = data['a'].map(eny).to_numpy()
+        aposz = data['a'].map(enz).to_numpy()
+        bposx = data['b'].map(enx).to_numpy()
+        bposy = data['b'].map(eny).to_numpy()
+        bposz = data['b'].map(enz).to_numpy()
+        mposx = data['m'].map(enx).to_numpy()
+        mposy = data['m'].map(eny).to_numpy()
+        mposz = data['m'].map(enz).to_numpy()
+        nposx = data['n'].map(enx).to_numpy()
+        nposy = data['n'].map(eny).to_numpy()
+        nposz = data['n'].map(enz).to_numpy()
+        AM = np.sqrt((aposx - mposx) ** 2 + (aposy - mposy) ** 2 + (aposz - mposz) ** 2)
+        BM = np.sqrt((bposx - mposx) ** 2 + (bposy - mposy) ** 2 + (bposz - mposz) ** 2)
+        AN = np.sqrt((aposx - nposx) ** 2 + (aposy - nposy) ** 2 + (aposz - nposz) ** 2)
+        BN = np.sqrt((bposx - nposx) ** 2 + (bposy - nposy) ** 2 + (bposz - nposz) ** 2)
+        AM[AM == 0] = np.nan
+        BM[BM == 0] = np.nan
+        AN[AN == 0] = np.nan
+        BN[BN == 0] = np.nan
+        k = 2 * np.pi / ((1 / AM) - (1 / BM) - (1 / AN) + (1 / BN))
+        self.data['k'] = k
+
+    def rec_process(self, rec_quantities=['r'], rec_max=10):
+        for q in rec_quantities:
+            print("checking reciprocal: ", q)
+            a = self.data["a"].to_numpy(dtype=np.uint16)
+            b = self.data["b"].to_numpy(dtype=np.uint16)
+            m = self.data["m"].to_numpy(dtype=np.uint16)
+            n = self.data["n"].to_numpy(dtype=np.uint16)
+            x = self.data[q].to_numpy(dtype=np.float64)
+            x_avg = q + "_rec_avg"
+            x_err = q + "_rec_err"
+            rec_num, rec_avg, rec_err, rec_fnd = process_rec(a, b, m, n, x)
+            self.data["rec_num"] = rec_num
+            self.data["rec_fnd"] = rec_fnd
+            self.data[x_avg] = rec_avg
+            self.data[x_err] = rec_err
+        rec_err_columns = [c for c in self.data.columns if "_rec_err" in c]
+        self.data["rec_err"] = self.data[rec_err_columns].mean(axis=1).to_numpy()
+        self.data["rec_valid"] = self.data["rec_err"] < rec_max
+
+    def rec_couple(self, keep_unpaired=True):
+        directs = self.data.loc[self.data["rec_fnd"] == 1].copy()
+        directs_valid = directs.loc[directs["valid"] == True]
+        directs_invalid = directs.loc[directs["valid"] == False]
+        directs_invalid_reciprocals = directs_invalid["rec_num"].values
+        reciprocals = self.data.loc[self.data["rec_fnd"] == 2].copy()
+        reciprocals_valid = reciprocals.loc[reciprocals["valid"] == True]
+        reciprocals_valid_needed = reciprocals_valid[reciprocals_valid["meas"].isin(directs_invalid_reciprocals)]
+        coupled = pd.concat((directs_valid, reciprocals_valid_needed))
+        if "r_rec_avg" in coupled.columns:
+            coupled["r_directs"] = coupled["r"]
+            coupled["r"] = coupled["r_rec_avg"]
+        if "rhoa_rec_avg" in directs.columns:
+            coupled["rhoa_directs"] = coupled["rhoa"]
+            coupled["rhoa"] = coupled["rhoa_rec_avg"]
+        if keep_unpaired:
+            unpaired = self.data.loc[self.data["rec_fnd"] == 0].copy()
+            unpaired_valid = unpaired.loc[unpaired["valid"] == True]
+            self.data = pd.concat([coupled, unpaired_valid])
+        else:
+            self.data = coupled
 
     def format_elec_coord(self, e_num, coordinates=["x", "z"]):
         string_format = ("{:10.3f} " * len(coordinates)).strip()
@@ -221,14 +281,26 @@ class ERTdataset:
         for c in cols:
             print("-----\n", self.data[c].value_counts())
 
-    def to_bert(self, fname, w_ip, w_err):
+    def to_bert(self, fname, w_ip=False, w_err=True, w_rhoa=False, w_k=False):
+        try:
+            os.remove(fname)
+        except OSError:
+            pass
+
         elec_cols = ["x", "y", "z"]
         data_cols = ["a", "b", "m", "n"]
-        meas_cols = ["r", "rhoa", "k"]
+        meas_cols = ["r"]
+        # meas_cols = ["r", "rhoa", "k"]
+
         if w_ip:
             meas_cols.append("ip")
         if w_err:
             meas_cols.append("err")
+        if w_rhoa:
+            meas_cols.append("rhoa")
+        if w_k:
+            meas_cols.append("k")
+
         for mc in meas_cols:
             if not any(self.data[mc].isnull()):
                 data_cols.append(mc)
